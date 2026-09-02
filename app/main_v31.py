@@ -8,9 +8,11 @@ from .services import apply_source_update, calculate_sale_price, log
 from .settings import settings
 from .naver import naver_commerce
 from .crawlers.macromart import MacroMartCrawler
+from .admin_routes import router as admin_product_router
 
 Base.metadata.create_all(engine)
-app = FastAPI(title='STORMPC AUTO COMMERCE v3.1')
+app = FastAPI(title='STORMPC AUTO COMMERCE v3.2')
+app.include_router(admin_product_router)
 ADMIN_COOKIE='stormpc_admin'
 
 def guard(request: Request):
@@ -20,7 +22,7 @@ def guard(request: Request):
 auth_css='''<style>body{font-family:Arial;background:#f4f6f8}.box{max-width:420px;margin:100px auto;background:#fff;padding:32px;border-radius:16px}input,button{padding:11px;margin:5px;box-sizing:border-box}input{width:100%}button{border:0;border-radius:7px;background:#111827;color:white;cursor:pointer}.err{color:#b91c1c}</style>'''
 
 @app.get('/health')
-def health(): return {'status':'ok','version':'v3.1'}
+def health(): return {'status':'ok','version':'v3.2'}
 
 @app.get('/admin/login',response_class=HTMLResponse)
 def login(error:str=''):
@@ -47,16 +49,17 @@ def admin(request:Request,db:Session=Depends(get_db)):
     soldout=db.scalar(select(func.count(Product.id)).where(Product.status=='SOLD_OUT')) or 0
     logs=db.scalars(select(SyncLog).order_by(SyncLog.created_at.desc()).limit(25)).all()
     products=db.scalars(select(Product).order_by(Product.updated_at.desc()).limit(200)).all()
-    rows=''.join(f'''<tr><td>{p.id}</td><td>{p.name}</td><td>{p.category or ''}</td><td>{p.supply_price:,}</td><td>{p.sale_price:,}</td><td>{p.stock}</td><td>{p.status}</td><td>{'승인' if p.approved else '대기'}</td><td><form method="post" action="/products/{p.id}/approve"><button>승인</button></form><form method="post" action="/products/{p.id}/recalculate"><button>가격 재계산</button></form><form method="post" action="/products/{p.id}/smartstore"><button>스토어 등록</button></form></td></tr>''' for p in products)
+    rows=''.join(f'''<tr><td>{p.id}</td><td><a href="/admin/products/{p.id}/edit">{p.name}</a></td><td>{p.category or ''}</td><td>{p.supply_price:,}</td><td>{p.sale_price:,}</td><td>{p.stock}</td><td>{p.status}</td><td>{'승인' if p.approved else '대기'}</td><td><form method="post" action="/products/{p.id}/approve"><button>승인</button></form><form method="post" action="/products/{p.id}/recalculate"><button>가격 재계산</button></form><form method="post" action="/products/{p.id}/smartstore"><button>스토어 등록</button></form></td></tr>''' for p in products)
     logrows=''.join(f'<tr><td>{x.created_at}</td><td>{x.action}</td><td>{x.level}</td><td>{x.message}</td></tr>' for x in logs)
-    return HTMLResponse(f'''<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style>body{{font-family:Arial;margin:0;background:#f5f7fb;color:#172033}}header{{background:#111827;color:#fff;padding:18px 24px;display:flex;justify-content:space-between}}main{{padding:20px;overflow:auto}}.cards{{display:grid;grid-template-columns:repeat(5,minmax(140px,1fr));gap:12px}}.card{{background:white;padding:16px;border-radius:14px}}table{{width:100%;border-collapse:collapse;background:#fff;margin-top:16px}}th,td{{padding:9px;border-bottom:1px solid #e5e7eb;white-space:nowrap;text-align:left}}form{{display:inline}}button{{padding:7px 9px;margin:2px}}</style></head><body><header><b>STORMPC AUTO COMMERCE v3.1</b><a style="color:#fff" href="/admin/logout">로그아웃</a></header><main><div class="cards"><div class="card">전체<h2>{total}</h2></div><div class="card">승인대기<h2>{pending}</h2></div><div class="card">승인완료<h2>{approved}</h2></div><div class="card">스토어등록<h2>{listed}</h2></div><div class="card">품절<h2>{soldout}</h2></div></div><p><form method="post" action="/crawl/macromart"><button>매크로마트 즉시 수집</button></form></p><h2>상품관리</h2><table><tr><th>ID</th><th>상품명</th><th>카테고리</th><th>공급가</th><th>판매가</th><th>재고</th><th>상태</th><th>승인</th><th>작업</th></tr>{rows}</table><h2>작업로그</h2><table><tr><th>시간</th><th>작업</th><th>레벨</th><th>내용</th></tr>{logrows}</table></main></body></html>''')
+    return HTMLResponse(f'''<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style>body{{font-family:Arial;margin:0;background:#f5f7fb;color:#172033}}header{{background:#111827;color:#fff;padding:18px 24px;display:flex;justify-content:space-between}}main{{padding:20px;overflow:auto}}.cards{{display:grid;grid-template-columns:repeat(5,minmax(140px,1fr));gap:12px}}.card{{background:white;padding:16px;border-radius:14px}}table{{width:100%;border-collapse:collapse;background:#fff;margin-top:16px}}th,td{{padding:9px;border-bottom:1px solid #e5e7eb;white-space:nowrap;text-align:left}}form{{display:inline}}button{{padding:7px 9px;margin:2px}}a{{color:#111827;font-weight:700}}</style></head><body><header><b>STORMPC AUTO COMMERCE v3.2</b><a style="color:#fff" href="/admin/logout">로그아웃</a></header><main><div class="cards"><div class="card">전체<h2>{total}</h2></div><div class="card">승인대기<h2>{pending}</h2></div><div class="card">승인완료<h2>{approved}</h2></div><div class="card">스토어등록<h2>{listed}</h2></div><div class="card">품절<h2>{soldout}</h2></div></div><p><form method="post" action="/crawl/macromart"><button>매크로마트 즉시 수집</button></form></p><h2>상품관리</h2><table><tr><th>ID</th><th>상품명</th><th>카테고리</th><th>공급가</th><th>판매가</th><th>재고</th><th>상태</th><th>승인</th><th>작업</th></tr>{rows}</table><h2>작업로그</h2><table><tr><th>시간</th><th>작업</th><th>레벨</th><th>내용</th></tr>{logrows}</table></main></body></html>''')
 
 @app.post('/products/{product_id}/approve')
 def approve(product_id:int,request:Request,db:Session=Depends(get_db)):
     g=guard(request)
     if g:return g
     p=db.get(Product,product_id)
-    if p and p.status!='SOLD_OUT': p.approved=True;p.status='APPROVED';log(db,'APPROVE','관리자 승인',p.id);db.commit()
+    if p and p.status!='SOLD_OUT':
+        p.approved=True; p.status='APPROVED'; log(db,'APPROVE','관리자 승인',p.id); db.commit()
     return RedirectResponse('/admin',303)
 
 @app.post('/products/{product_id}/recalculate')
@@ -90,15 +93,18 @@ def crawl(request:Request,db:Session=Depends(get_db)):
     g=guard(request)
     if g:return g
     try:
-        data=MacroMartCrawler().crawl();new=changed=0
+        data=MacroMartCrawler().crawl(); new=changed=0
         for item in data:
             if item.get('error') or not item.get('url'): continue
             ext=item['url'][:100]
             p=db.scalar(select(Product).where(Product.external_id==ext))
             if not p:
-                p=Product(external_id=ext,name=item.get('name') or '미상 상품',category='',status='PENDING');db.add(p);db.flush();new+=1
+                p=Product(external_id=ext,name=item.get('name') or '미상 상품',category=item.get('category_path') or '',status='PENDING');db.add(p);db.flush();new+=1
             else: changed+=1
-            p.name=item.get('name') or p.name;p.representative_image=item.get('representative_image') or p.representative_image;p.detail_html=item.get('detail_html') or p.detail_html
+            p.name=item.get('name') or p.name
+            if item.get('category_path') and not p.category: p.category=item['category_path']
+            p.representative_image=item.get('representative_image') or p.representative_image
+            p.detail_html=item.get('detail_html') or p.detail_html
             apply_source_update(db,p,int(item.get('source_price') or 0),int(item.get('source_stock') or 0))
         log(db,'CRAWL',f'매크로마트 수집 완료 신규={new}, 갱신={changed}');db.commit()
     except Exception as exc:
