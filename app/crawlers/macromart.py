@@ -1,6 +1,6 @@
 from pathlib import Path
 from typing import Any
-from urllib.parse import urljoin
+from urllib.parse import urljoin, urlparse, parse_qs
 import re
 from playwright.sync_api import sync_playwright, Page
 from ..settings import settings
@@ -25,84 +25,224 @@ class MacroMartCrawler:
             raise RuntimeError('매크로마트 로그인 입력창을 찾지 못했습니다. inspect_macromart.py 결과를 확인하세요.')
         if not settings.macromart_id or not settings.macromart_password:
             raise RuntimeError('MACROMART_ID / MACROMART_PASSWORD가 설정되지 않았습니다.')
-        id_el.fill(settings.macromart_id); pw_el.fill(settings.macromart_password)
+        id_el.fill(settings.macromart_id)
+        pw_el.fill(settings.macromart_password)
         for s in ['button[type="submit"]','input[type="submit"]','button:has-text("로그인")','a:has-text("로그인")']:
             if page.locator(s).count():
-                page.locator(s).first.click(); page.wait_for_load_state('domcontentloaded'); break
-        page.wait_for_timeout(700)
+                page.locator(s).first.click()
+                page.wait_for_load_state('domcontentloaded')
+                break
+        page.wait_for_timeout(1000)
         return page
 
-    def product_links(self, page: Page, limit: int = 100) -> list[str]:
-        out=[]; seen=set()
+    @staticmethod
+    def _is_product_url(url: str) -> bool:
+        parsed = urlparse(url)
+        path = parsed.path.lower()
+        query = parse_qs(parsed.query)
+
+        # Cafe24 상품 상세 URL은 product/detail.html?product_no=123 형태가 가장 흔함.
+        if path.endswith('/product/detail.html') and query.get('product_no'):
+            return True
+        if '/product/' in path and ('detail' in path or 'product_no' in query):
+            return True
+        if any(key in query for key in ('product_no', 'goods_no', 'item_no', 'prd_no')):
+            return True
+        return False
+
+    @staticmethod
+    def _is_category_or_navigation(url: str) -> bool:
+        parsed = urlparse(url)
+        path = parsed.path.lower()
+        if '/category/' in path:
+            return True
+        if path.endswith('/') or path in ('', '/index.html'):
+            return True
+        if any(x in path for x in ('/member/', '/myshop/', '/order/', '/board/', '/exec/')):
+            return True
+        return False
+
+    def _collect_from_current_page(self, page: Page, seen: set[str]) -> list[str]:
+        found: list[str] = []
         for el in page.locator('a[href]').all():
             try:
-                href=el.get_attribute('href') or ''; text=el.inner_text().strip()
-                if not text or href.lower().startswith(('javascript:','#','mailto:')): continue
-                url=urljoin(settings.macromart_base_url,href); key=url.lower()
-                if any(k in key for k in ('product','goods','item','detail','view')) and key not in seen:
-                    seen.add(key); out.append(url)
-                    if len(out)>=limit: break
-            except Exception: continue
-        return out
+                href = (el.get_attribute('href') or '').strip()
+                if not href or href.lower().startswith(('javascript:', '#', 'mailto:')):
+                    continue
+                url = urljoin(page.url, href)
+                if not url.startswith(settings.macromart_base_url):
+                    continue
+                if self._is_product_url(url):
+                    key = url.split('#', 1)[0]
+                    if key not in seen:
+                        seen.add(key)
+                        found.append(key)
+            except Exception:
+                continue
+        return found
+
+    def product_links(self, page: Page, limit: int = 100) -> list[str]:
+        seen: set[str] = set()
+        out: list[str] = []
+
+        # 1) 현재 로그인 후 메인 화면에서 실제 상품 상세 URL을 찾는다.
+        out.extend(self._collect_from_current_page(page, seen))
+
+        # 2) 전체 카테고리 링크를 따라가 상품 목록에서 상세 URL을 찾는다.
+        #    links.json에서 /category/... 구조가 확인되므로, 기존의 URL 키워드 추정 방식 대신
+        #    실제 Cafe24 product/detail.html?product_no=... 패턴을 기준으로 수집한다.
+        category_urls: list[str] = []
+        for el in page.locator('a[href]').all():
+            try:
+                href = (el.get_attribute('href') or '').strip()
+                if not href or href.lower().startswith(('javascript:', '#', 'mailto:')):
+                    continue
+                url = urljoin(page.url, href).split('#', 1)[0]
+                if url.startswith(settings.macromart_base_url) and '/category/' in urlparse(url).path.lower():
+                    if url not in category_urls:
+                        category_urls.append(url)
+            except Exception:
+                continue
+
+        # 중복/메뉴성 카테고리를 제외하되 충분히 넓게 훑는다.
+        for category_url in category_urls[:80]:
+            try:
+                page.goto(category_url, wait_until='domcontentloaded', timeout=60000)
+                page.wait_for_timeout(300)
+                out.extend(self._collect_from_current_page(page, seen))
+                if len(out) >= limit:
+                    return out[:limit]
+
+                # 목록의 페이지네이션도 몇 페이지 훑는다.
+                for _ in range(8):
+                    next_urls = []
+                    for el in page.locator('a[href]').all():
+                        try:
+                            href = (el.get_attribute('href') or '').strip()
+                            txt = (el.inner_text() or '').strip()
+                            if href and txt in {'2','3','4','5','다음','Next','›','>'}:
+                                u = urljoin(page.url, href)
+                                if u.startswith(settings.macromart_base_url):
+                                    next_urls.append(u)
+                        except Exception:
+                            continue
+                    next_url = next((u for u in next_urls if u != page.url), None)
+                    if not next_url:
+                        break
+                    page.goto(next_url, wait_until='domcontentloaded', timeout=60000)
+                    page.wait_for_timeout(250)
+                    before = len(out)
+                    out.extend(self._collect_from_current_page(page, seen))
+                    if len(out) == before or len(out) >= limit:
+                        break
+            except Exception:
+                continue
+
+        # 3) 마지막 안전망: 페이지 소스에서 product_no 패턴을 직접 찾아낸다.
+        try:
+            html = page.content()
+            for m in re.finditer(r'(?:product_no|goods_no|item_no|prd_no)[^\d]{0,10}(\d+)', html, re.I):
+                product_no = m.group(1)
+                url = urljoin(settings.macromart_base_url, f'/product/detail.html?product_no={product_no}')
+                if url not in seen:
+                    seen.add(url)
+                    out.append(url)
+                    if len(out) >= limit:
+                        break
+        except Exception:
+            pass
+
+        return out[:limit]
 
     def detail(self, page: Page, url: str) -> dict[str, Any]:
-        page.goto(url, wait_until='domcontentloaded', timeout=60000); page.wait_for_timeout(250)
-        name=''
+        page.goto(url, wait_until='domcontentloaded', timeout=60000)
+        page.wait_for_timeout(250)
+        name = ''
         for s in ['h1','.prdName','.product-name','.goods_name','.item-name','title']:
             if page.locator(s).count():
                 try:
-                    name=page.locator(s).first.inner_text().strip()
-                    if name: break
-                except Exception: pass
-        body=page.locator('body').inner_text(); price=0
+                    name = page.locator(s).first.inner_text().strip()
+                    if name:
+                        break
+                except Exception:
+                    pass
+        body = page.locator('body').inner_text()
+        price = 0
         for s in ['.sale_price','.price','.goods_price','.product-price','[class*="price"]','[id*="price"]']:
             if page.locator(s).count():
                 try:
-                    price=money(page.locator(s).first.inner_text())
-                    if price: break
-                except Exception: pass
+                    price = money(page.locator(s).first.inner_text())
+                    if price:
+                        break
+                except Exception:
+                    pass
         if not price:
-            candidates=[money(x) for x in re.findall(r'[^\n]{0,30}\d{1,3}(?:,\d{3})+[^\n]{0,30}',body)]
-            price=next((p for p in candidates if p>0),0)
+            candidates = [money(x) for x in re.findall(r'[^\n]{0,30}\d{1,3}(?:,\d{3})+[^\n]{0,30}', body)]
+            price = next((p for p in candidates if p > 0), 0)
         soldout = price == 1 or any(t in body for t in ('품절','일시품절','판매중지'))
         stock = 0 if soldout else 1
-        rep=''
-        if page.locator('meta[property="og:image"]').count(): rep=page.locator('meta[property="og:image"]').get_attribute('content') or ''
+        rep = ''
+        if page.locator('meta[property="og:image"]').count():
+            rep = page.locator('meta[property="og:image"]').get_attribute('content') or ''
         if not rep:
             for s in ['.product-image img','.prdImg img','.goods_img img','img']:
                 if page.locator(s).count():
-                    rep=page.locator(s).first.get_attribute('src') or ''
-                    if rep: rep=urljoin(url,rep); break
-        detail_html=''
+                    rep = page.locator(s).first.get_attribute('src') or ''
+                    if rep:
+                        rep = urljoin(url, rep)
+                        break
+        detail_html = ''
         for s in ['.detail','.product-detail','.prdDetail','#detail','[class*="detail"]']:
             if page.locator(s).count():
                 try:
-                    detail_html=page.locator(s).first.inner_html()
-                    if detail_html: break
-                except Exception: pass
-        if not detail_html: detail_html='<p>'+ (name or '상품') +'</p>'
-        category=[]
+                    detail_html = page.locator(s).first.inner_html()
+                    if detail_html:
+                        break
+                except Exception:
+                    pass
+        if not detail_html:
+            detail_html = '<p>' + (name or '상품') + '</p>'
+        category = []
         for s in ['.breadcrumb a','.location a','.category a','[class*="breadcrumb"] a']:
             if page.locator(s).count():
                 try:
-                    category=[x.strip() for x in page.locator(s).all_inner_texts() if x.strip()]
-                    if category: break
-                except Exception: pass
-        return {'url':url,'name':name or '미상 상품','source_price':price,'source_stock':stock,'representative_image':rep,'detail_html':detail_html,'category_path':' > '.join(category)}
+                    category = [x.strip() for x in page.locator(s).all_inner_texts() if x.strip()]
+                    if category:
+                        break
+                except Exception:
+                    pass
+        return {
+            'url': url,
+            'name': name or '미상 상품',
+            'source_price': price,
+            'source_stock': stock,
+            'representative_image': rep,
+            'detail_html': detail_html,
+            'category_path': ' > '.join(category),
+        }
 
-    def collect(self,page:Page,limit:int=100)->list[dict[str,Any]]:
-        results=[]
-        for url in self.product_links(page,limit):
-            try: results.append(self.detail(page,url))
-            except Exception as exc: results.append({'url':url,'error':str(exc)})
+    def collect(self, page: Page, limit: int = 100) -> list[dict[str, Any]]:
+        results = []
+        urls = self.product_links(page, limit=limit)
+        ARTIFACTS.mkdir(exist_ok=True)
+        try:
+            (ARTIFACTS / 'macromart_product_urls.txt').write_text('\n'.join(urls), encoding='utf-8')
+        except Exception:
+            pass
+        for url in urls:
+            try:
+                results.append(self.detail(page, url))
+            except Exception as exc:
+                results.append({'url': url, 'error': str(exc)})
         return results
 
-    def crawl(self, limit:int=100)->list[dict[str,Any]]:
+    def crawl(self, limit: int = 100) -> list[dict[str, Any]]:
         ARTIFACTS.mkdir(exist_ok=True)
         with sync_playwright() as p:
-            browser=p.chromium.launch(headless=settings.macromart_headless)
-            page=browser.new_page(viewport={'width':1440,'height':1000})
+            browser = p.chromium.launch(headless=settings.macromart_headless)
+            page = browser.new_page(viewport={'width': 1440, 'height': 1000})
             self.login(page)
-            page.screenshot(path=str(ARTIFACTS/'macromart_after_login.png'),full_page=True)
-            results=self.collect(page,limit=limit)
-            browser.close(); return results
+            page.screenshot(path=str(ARTIFACTS / 'macromart_after_login.png'), full_page=True)
+            results = self.collect(page, limit=limit)
+            browser.close()
+            return results
