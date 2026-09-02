@@ -45,7 +45,7 @@ if not exist ".env" (
 echo.
 echo 설치가 완료되었습니다.
 echo 1) .env 파일 설정
-orecho 2) start_auto_naver.bat 실행
+echo 2) start_auto_naver.bat 실행
 pause
 exit /b 0
 
