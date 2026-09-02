@@ -4,14 +4,27 @@ cd /d "%~dp0"
 
 if not exist ".venv\Scripts\python.exe" (
   echo [ERROR] Virtual environment not found.
-  echo Run install_auto_naver.bat first.
+  echo Running installer now...
+  if exist "install_auto_naver.bat" (
+    call "install_auto_naver.bat"
+  ) else (
+    echo [ERROR] install_auto_naver.bat is missing.
+    pause
+    exit /b 1
+  )
+)
+
+if not exist ".venv\Scripts\python.exe" (
+  echo [ERROR] Installation did not complete.
   pause
   exit /b 1
 )
 
 if not exist ".env" (
   echo [ERROR] .env file not found.
-  echo Run install_auto_naver.bat first.
+  copy /Y ".env.example" ".env" >nul
+  echo A new .env file has been created.
+  echo Edit .env and run this file again.
   pause
   exit /b 1
 )
