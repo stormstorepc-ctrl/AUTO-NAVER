@@ -4,3 +4,5 @@ __pycache__/
 *.pyc
 *.db
 artifacts/
+.naver_cafe_token.json
+.naver_cafe_state
