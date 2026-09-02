@@ -3,7 +3,7 @@ import secrets
 import time
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlencode
+from urllib.parse import urlencode, quote
 
 import httpx
 
@@ -107,17 +107,31 @@ class NaverCafeClient:
             return str(token)
         return str(self.refresh()["access_token"])
 
+    @staticmethod
+    def _naver_form_encode(value: str) -> str:
+        # Naver Cafe API expects form values URL-encoded after UTF-8 -> MS949 re-encoding.
+        # This mirrors the official Cafe API examples for subject/content.
+        utf8_bytes = value.encode("utf-8")
+        text = utf8_bytes.decode("utf-8")
+        ms949_bytes = text.encode("cp949", errors="replace")
+        return quote(ms949_bytes, safe="")
+
     def post(self, subject: str, content: str) -> dict[str, Any]:
         if not self.club_id or not self.menu_id:
             raise RuntimeError("NAVER_CAFE_CLUB_ID와 NAVER_CAFE_MENU_ID를 설정해주세요.")
         url = f"{CAFE_API_BASE}/{self.club_id}/menu/{self.menu_id}/articles"
-        data = {"subject": subject, "content": content}
-        headers = {"Authorization": f"Bearer {self.access_token()}", "Content-Type": "application/x-www-form-urlencoded"}
-        response = httpx.post(url, data=data, headers=headers, timeout=30)
+        encoded_subject = self._naver_form_encode(subject)
+        encoded_content = self._naver_form_encode(content)
+        body = f"subject={encoded_subject}&content={encoded_content}"
+        headers = {
+            "Authorization": f"Bearer {self.access_token()}",
+            "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+        }
+        response = httpx.post(url, content=body.encode("utf-8"), headers=headers, timeout=30)
         if response.status_code == 401:
             self._token = self.refresh()
             headers["Authorization"] = f"Bearer {self._token['access_token']}"
-            response = httpx.post(url, data=data, headers=headers, timeout=30)
+            response = httpx.post(url, content=body.encode("utf-8"), headers=headers, timeout=30)
         response.raise_for_status()
         return response.json()
 
