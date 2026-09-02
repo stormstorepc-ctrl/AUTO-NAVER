@@ -54,7 +54,7 @@ def admin(request:Request,db:Session=Depends(get_db)):
     cafe_token=bool(getattr(naver_cafe,'_token',{}).get('access_token'))
     rows=''.join(f'''<tr><td>{p.id}</td><td><a href="/admin/products/{p.id}/edit">{p.name}</a></td><td>{p.category or ''}</td><td>{p.supply_price:,}</td><td>{p.sale_price:,}</td><td>{p.stock}</td><td>{p.status}</td><td>{'승인' if p.approved else '대기'}</td><td><form method="post" action="/products/{p.id}/approve"><button>승인</button></form><form method="post" action="/products/{p.id}/recalculate"><button>가격 재계산</button></form><form method="post" action="/products/{p.id}/smartstore"><button>스토어 등록</button></form><form method="post" action="/products/{p.id}/cafe"><button>카페 등록</button></form></td></tr>''' for p in products)
     logrows=''.join(f'<tr><td>{x.created_at}</td><td>{x.action}</td><td>{x.level}</td><td>{x.message}</td></tr>' for x in logs)
-    return HTMLResponse(f'''<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style>body{{font-family:Arial;margin:0;background:#f5f7fb;color:#172033}}header{{background:#111827;color:#fff;padding:18px 24px;display:flex;justify-content:space-between}}main{{padding:20px;overflow:auto}}.cards{{display:grid;grid-template-columns:repeat(5,minmax(140px,1fr));gap:12px}}.card{{background:white;padding:16px;border-radius:14px}}table{{width:100%;border-collapse:collapse;background:#fff;margin-top:16px}}th,td{{padding:9px;border-bottom:1px solid #e5e7eb;white-space:nowrap;text-align:left}}form{{display:inline}}button{{padding:7px 9px;margin:2px}}a{{color:#111827;font-weight:700}}.notice{{background:#fff;padding:14px;border-radius:12px;margin:16px 0}}</style></head><body><header><b>STORMPC AUTO COMMERCE v3.2</b><a style="color:#fff" href="/admin/logout">로그아웃</a></header><main><div class="cards"><div class="card">전체<h2>{total}</h2></div><div class="card">승인대기<h2>{pending}</h2></div><div class="card">승인완료<h2>{approved}</h2></div><div class="card">스토어등록<h2>{listed}</h2></div><div class="card">품절<h2>{soldout}</h2></div></div><div class="notice"><b>네이버 카페:</b> {'연결됨' if cafe_token else '미연결'} / API 설정 {'완료' if cafe_ready else '필요'} &nbsp; <a href="/naver/login">네이버 카페 연결/재인증</a></div><p><form method="post" action="/crawl/macromart"><button>매크로마트 1개 테스트 수집</button></form></p><h2>상품관리</h2><table><tr><th>ID</th><th>상품명</th><th>카테고리</th><th>공급가</th><th>판매가</th><th>재고</th><th>상태</th><th>승인</th><th>작업</th></tr>{rows}</table><h2>작업로그</h2><table><tr><th>시간</th><th>작업</th><th>레벨</th><th>내용</th></tr>{logrows}</table></main></body></html>''')
+    return HTMLResponse(f'''<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style>body{{font-family:Arial;margin:0;background:#f5f7fb;color:#172033}}header{{background:#111827;color:#fff;padding:18px 24px;display:flex;justify-content:space-between}}main{{padding:20px;overflow:auto}}.cards{{display:grid;grid-template-columns:repeat(5,minmax(140px,1fr));gap:12px}}.card{{background:white;padding:16px;border-radius:14px}}table{{width:100%;border-collapse:collapse;background:#fff;margin-top:16px}}th,td{{padding:9px;border-bottom:1px solid #e5e7eb;white-space:nowrap;text-align:left}}form{{display:inline}}button{{padding:7px 9px;margin:2px}}a{{color:#111827;font-weight:700}}.notice{{background:#fff;padding:14px;border-radius:12px;margin:16px 0}}</style></head><body><header><b>STORMPC AUTO COMMERCE v3.2</b><a style="color:#fff" href="/admin/logout">로그아웃</a></header><main><div class="cards"><div class="card">전체<h2>{total}</h2></div><div class="card">승인대기<h2>{pending}</h2></div><div class="card">승인완료<h2>{approved}</h2></div><div class="card">스토어등록<h2>{listed}</h2></div><div class="card">품절<h2>{soldout}</h2></div></div><div class="notice"><b>네이버 카페:</b> {'연결됨' if cafe_token else '미연결'} / API 설정 {'완료' if cafe_ready else '필요'} &nbsp; <a href="/naver/login">네이버 카페 연결/재인증</a></div><p><form method="post" action="/crawl/macromart"><button>매크로마트 전체 수집</button></form></p><h2>상품관리</h2><table><tr><th>ID</th><th>상품명</th><th>카테고리</th><th>공급가</th><th>판매가</th><th>재고</th><th>상태</th><th>승인</th><th>작업</th></tr>{rows}</table><h2>작업로그</h2><table><tr><th>시간</th><th>작업</th><th>레벨</th><th>내용</th></tr>{logrows}</table></main></body></html>''')
 
 @app.get('/naver/login')
 def naver_login(request: Request):
@@ -121,7 +121,7 @@ def cafe(product_id:int,request:Request,db:Session=Depends(get_db)):
         try:
             if not naver_cafe.configured: raise RuntimeError('네이버 카페 API 설정이 완료되지 않았습니다.')
             title=f'{p.name}'
-            content=f'{p.name}\n\n판매가: {p.sale_price:,}원\n재고: {p.stock}개\n\n{p.detail_html or ""}'
+            content=f'{p.name}\n\n공급가: {p.supply_price:,}원\n판매가: {p.sale_price:,}원\n재고: {p.stock}개\n\n{p.detail_html or ""}'
             result=naver_cafe.post(title,content)
             p.cafe_post_id=str(result.get('articleId') or result.get('articleid') or result.get('id') or '') or None
             log(db,'CAFE_POST',f'카페 게시 성공 {result}',p.id)
@@ -135,8 +135,7 @@ def crawl(request:Request,db:Session=Depends(get_db)):
     g=guard(request)
     if g:return g
     try:
-        # Manual verification mode: collect exactly one MacroMart product.
-        data=MacroMartCrawler().crawl(limit=1); new=changed=0
+        data=MacroMartCrawler().crawl(limit=100); new=changed=0
         for item in data:
             if item.get('error') or not item.get('url'): continue
             ext=item['url'][:100]
@@ -149,7 +148,7 @@ def crawl(request:Request,db:Session=Depends(get_db)):
             p.representative_image=item.get('representative_image') or p.representative_image
             p.detail_html=item.get('detail_html') or p.detail_html
             apply_source_update(db,p,int(item.get('source_price') or 0),int(item.get('source_stock') or 0))
-        log(db,'CRAWL_TEST',f'매크로마트 1개 테스트 수집 완료 신규={new}, 갱신={changed}');db.commit()
+        log(db,'CRAWL',f'매크로마트 전체 수집 완료 신규={new}, 갱신={changed}');db.commit()
     except Exception as exc:
-        log(db,'CRAWL_TEST',str(exc),None,'ERROR');db.commit()
+        log(db,'CRAWL',str(exc),None,'ERROR');db.commit()
     return RedirectResponse('/admin',303)
