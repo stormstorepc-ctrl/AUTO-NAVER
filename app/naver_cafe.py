@@ -3,7 +3,7 @@ import secrets
 import time
 from pathlib import Path
 from typing import Any
-from urllib.parse import quote_from_bytes, urlencode
+from urllib.parse import quote, urlencode
 
 import httpx
 
@@ -27,7 +27,13 @@ class NaverCafeClient:
 
     @property
     def configured(self) -> bool:
-        return bool(self.client_id and self.client_secret and self.redirect_uri and self.club_id and self.menu_id)
+        return bool(
+            self.client_id
+            and self.client_secret
+            and self.redirect_uri
+            and self.club_id
+            and self.menu_id
+        )
 
     def _load_token(self) -> dict[str, Any]:
         try:
@@ -38,39 +44,57 @@ class NaverCafeClient:
         except Exception:
             pass
         if settings.naver_cafe_access_token:
-            return {"access_token": settings.naver_cafe_access_token, "token_type": "bearer", "expires_at": 0}
+            return {
+                "access_token": settings.naver_cafe_access_token,
+                "token_type": "bearer",
+                "expires_at": 0,
+            }
         return {}
 
     def _save_token(self, payload: dict[str, Any]) -> None:
-        TOKEN_FILE.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        TOKEN_FILE.write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
 
     def authorization_url(self) -> str:
         if not self.client_id or not self.redirect_uri:
             raise RuntimeError("NAVER_CLIENT_ID와 NAVER_REDIRECT_URI가 필요합니다.")
         state = secrets.token_urlsafe(24)
         STATE_FILE.write_text(state, encoding="utf-8")
-        return AUTH_URL + "?" + urlencode({
-            "response_type": "code",
-            "client_id": self.client_id,
-            "redirect_uri": self.redirect_uri,
-            "state": state,
-        })
+        return AUTH_URL + "?" + urlencode(
+            {
+                "response_type": "code",
+                "client_id": self.client_id,
+                "redirect_uri": self.redirect_uri,
+                "state": state,
+            }
+        )
 
     def exchange_code(self, code: str, state: str) -> dict[str, Any]:
-        expected = STATE_FILE.read_text(encoding="utf-8").strip() if STATE_FILE.exists() else ""
+        expected = (
+            STATE_FILE.read_text(encoding="utf-8").strip()
+            if STATE_FILE.exists()
+            else ""
+        )
         if not expected or not secrets.compare_digest(expected, state):
             raise RuntimeError("네이버 OAuth state가 일치하지 않습니다. 다시 로그인해주세요.")
-        response = httpx.get(TOKEN_URL, params={
-            "grant_type": "authorization_code",
-            "client_id": self.client_id,
-            "client_secret": self.client_secret,
-            "code": code,
-            "state": state,
-        }, timeout=30)
+
+        response = httpx.get(
+            TOKEN_URL,
+            params={
+                "grant_type": "authorization_code",
+                "client_id": self.client_id,
+                "client_secret": self.client_secret,
+                "code": code,
+                "state": state,
+            },
+            timeout=30,
+        )
         response.raise_for_status()
         payload = response.json()
         if "error" in payload:
             raise RuntimeError(payload.get("error_description") or payload["error"])
+
         payload["expires_at"] = time.time() + int(payload.get("expires_in", 3600))
         self._token = payload
         self._save_token(payload)
@@ -84,18 +108,24 @@ class NaverCafeClient:
         refresh_token = self._token.get("refresh_token")
         if not refresh_token:
             raise RuntimeError("저장된 refresh token이 없습니다. 네이버 인증을 다시 진행해주세요.")
-        response = httpx.get(TOKEN_URL, params={
-            "grant_type": "refresh_token",
-            "client_id": self.client_id,
-            "client_secret": self.client_secret,
-            "refresh_token": refresh_token,
-        }, timeout=30)
+
+        response = httpx.get(
+            TOKEN_URL,
+            params={
+                "grant_type": "refresh_token",
+                "client_id": self.client_id,
+                "client_secret": self.client_secret,
+                "refresh_token": refresh_token,
+            },
+            timeout=30,
+        )
         response.raise_for_status()
         payload = response.json()
         if "error" in payload:
             raise RuntimeError(payload.get("error_description") or payload["error"])
         if "refresh_token" not in payload:
             payload["refresh_token"] = refresh_token
+
         payload["expires_at"] = time.time() + int(payload.get("expires_in", 3600))
         self._token = payload
         self._save_token(payload)
@@ -103,18 +133,27 @@ class NaverCafeClient:
 
     def access_token(self) -> str:
         token = self._token.get("access_token")
-        if token and (not self._token.get("expires_at") or time.time() < float(self._token["expires_at"]) - 60):
+        if token and (
+            not self._token.get("expires_at")
+            or time.time() < float(self._token["expires_at"]) - 60
+        ):
             return str(token)
         return str(self.refresh()["access_token"])
 
     @staticmethod
     def _naver_form_value(value: str) -> str:
-        # Naver Cafe Open API expects subject/content URL-encoded from MS949 bytes.
-        # quote_from_bytes preserves the exact CP949/MS949 byte sequence.
+        """Encode Cafe API text exactly like Naver's documented Java example.
+
+        Naver's Cafe Open API documentation specifies URL-encoding the UTF-8
+        representation and then URL-encoding that result using MS949.
+        """
         try:
-            return quote_from_bytes(value.encode("ms949"), safe="")
+            utf8_encoded = quote(value, encoding="utf-8", safe="")
+            return quote(utf8_encoded, encoding="ms949", safe="")
         except UnicodeEncodeError as exc:
-            raise ValueError("카페 글에 MS949로 표현할 수 없는 문자가 포함되어 있습니다.") from exc
+            raise ValueError(
+                "카페 글에 MS949로 표현할 수 없는 문자가 포함되어 있습니다."
+            ) from exc
 
     def post(self, subject: str, content: str) -> dict[str, Any]:
         if not self.club_id or not self.menu_id:
@@ -128,6 +167,7 @@ class NaverCafeClient:
             "Authorization": f"Bearer {self.access_token()}",
             "Content-Type": "application/x-www-form-urlencoded; charset=MS949",
         }
+
         response = httpx.post(url, content=body, headers=headers, timeout=30)
         if response.status_code == 401:
             self._token = self.refresh()
