@@ -1,56 +1,63 @@
 @echo off
 setlocal
 cd /d "%~dp0"
+chcp 65001 >nul
 
 echo ========================================
 echo STORMPC AUTO-NAVER - Windows Installer
 echo ========================================
+echo.
 
-where python >nul 2>nul
-if errorlevel 1 (
-  echo [ERROR] Python이 설치되어 있지 않거나 PATH에 없습니다.
-  echo Python 3.12 이상을 설치한 후 다시 실행하세요.
-  pause
-  exit /b 1
-)
-
-python --version
+where py >nul 2>nul
+if errorlevel 1 goto NO_PY
+py -3 --version
+if errorlevel 1 goto NO_PY
 
 if not exist ".venv\Scripts\python.exe" (
-  echo [1/4] 가상환경 생성 중...
-  python -m venv .venv
-  if errorlevel 1 goto :error
+  echo [1/4] Creating Python virtual environment...
+  py -3 -m venv .venv
+  if errorlevel 1 goto ERROR
 ) else (
-  echo [1/4] 기존 가상환경 사용
+  echo [1/4] Existing virtual environment found.
 )
 
-echo [2/4] Python 패키지 설치 중...
+echo [2/4] Installing Python packages...
 ".venv\Scripts\python.exe" -m pip install --upgrade pip
+if errorlevel 1 goto ERROR
 ".venv\Scripts\python.exe" -m pip install -r requirements.txt
-if errorlevel 1 goto :error
+if errorlevel 1 goto ERROR
 
-echo [3/4] Playwright Chromium 설치 중...
+echo [3/4] Installing Playwright Chromium...
 ".venv\Scripts\python.exe" -m playwright install chromium
-if errorlevel 1 goto :error
+if errorlevel 1 goto ERROR
 
-echo [4/4] 환경설정 파일 확인 중...
+echo [4/4] Checking environment file...
 if not exist ".env" (
   copy /Y ".env.example" ".env" >nul
-  echo .env 파일을 생성했습니다.
-  echo 다음 단계에서 .env를 메모장으로 열어 실제 계정/API 정보를 입력하세요.
+  if errorlevel 1 goto ERROR
+  echo Created .env from .env.example.
 ) else (
-  echo 기존 .env 파일을 유지합니다.
+  echo Existing .env found. Keeping it unchanged.
 )
 
 echo.
-echo 설치가 완료되었습니다.
-echo 1) .env 파일 설정
-echo 2) start_auto_naver.bat 실행
+echo INSTALLATION COMPLETE.
+echo Next step: edit .env, then run start_auto_naver.bat
+echo.
 pause
 exit /b 0
 
-:error
+:NO_PY
 echo.
-echo [ERROR] 설치 중 오류가 발생했습니다.
+echo ERROR: Python 3 is not available.
+echo Install Python 3.12 or newer from python.org and enable "Add Python to PATH".
+echo.
+pause
+exit /b 1
+
+:ERROR
+echo.
+echo ERROR: Installation failed. Check the message above.
+echo.
 pause
 exit /b 1
