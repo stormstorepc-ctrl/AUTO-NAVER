@@ -1,6 +1,6 @@
 from fastapi import Depends, FastAPI, Form, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
-from sqlalchemy import func, select
+from sqlalchemy import func, select, delete
 from sqlalchemy.orm import Session
 from .db import Base, engine, get_db
 from .models import Product, SyncLog
@@ -120,16 +120,24 @@ def crawl(request:Request,db:Session=Depends(get_db)):
     g=guard(request)
     if g:return g
     try:
-        data=MacroMartCrawler().crawl(limit=100); new=changed=0
+        # 이전 진단 과정에서 만들어진 명백한 가짜 행을 자동 정리한다.
+        db.execute(delete(Product).where(Product.name.in_(['카페24','cafe24']),Product.supply_price==0,Product.sale_price==0,Product.smartstore_product_id.is_(None),Product.cafe_post_id.is_(None)))
+        data=MacroMartCrawler().crawl(limit=100); new=changed=skipped=0
         for item in data:
-            if item.get('error') or not item.get('url'): continue
+            if item.get('error') or not item.get('url'):
+                skipped+=1; continue
+            source_price=int(item.get('source_price') or 0)
+            source_stock=int(item.get('source_stock') or 0)
+            if source_price<=0:
+                skipped+=1; continue
             ext=item['url'][:100]; p=db.scalar(select(Product).where(Product.external_id==ext))
-            if not p: p=Product(external_id=ext,name=item.get('name') or '미상 상품',category=item.get('category_path') or '',status='PENDING'); db.add(p); db.flush(); new+=1
+            if not p:
+                p=Product(external_id=ext,name=item.get('name') or '미상 상품',category=item.get('category_path') or '',status='PENDING'); db.add(p); db.flush(); new+=1
             else: changed+=1
             p.name=item.get('name') or p.name
             if item.get('category_path') and not p.category:p.category=item['category_path']
             p.representative_image=item.get('representative_image') or p.representative_image; p.detail_html=item.get('detail_html') or p.detail_html
-            apply_source_update(db,p,int(item.get('source_price') or 0),int(item.get('source_stock') or 0))
-        log(db,'CRAWL',f'매크로마트 전체 수집 완료 신규={new}, 갱신={changed}'); db.commit()
+            apply_source_update(db,p,source_price,source_stock)
+        log(db,'CRAWL',f'매크로마트 전체 수집 완료 신규={new}, 갱신={changed}, 제외={skipped}'); db.commit()
     except Exception as exc: log(db,'CRAWL',str(exc),None,'ERROR'); db.commit()
     return RedirectResponse('/admin',303)
