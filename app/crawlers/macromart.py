@@ -8,14 +8,15 @@ from ..settings import settings
 
 ARTIFACTS = Path('artifacts')
 PRICE_RE = re.compile(r'(?<!\d)(\d{1,3}(?:,\d{3})+|\d+)(?:\s*원)?')
+GENERIC_NAMES = {'카페24', 'cafe24', '상품', '상품명', '미상 상품', ''}
 
 def money(text: str) -> int:
-    m = PRICE_RE.search(text or '')
-    return int(m.group(1).replace(',', '')) if m else 0
+    m = PRICE_RE.search((text or '').replace('\xa0',' '))
+    return int(m.group(1).replace(',','')) if m else 0
 
 class MacroMartCrawler:
-    def login(self, page: Page) -> Page:
-        page.goto(settings.macromart_start_url, wait_until='domcontentloaded', timeout=60000)
+    def login(self,page:Page)->Page:
+        page.goto(settings.macromart_start_url,wait_until='domcontentloaded',timeout=60000)
         id_candidates=['input[name="id"]','input[name="userid"]','input[name="user_id"]','input[name="member_id"]','input[type="text"]']
         pw_candidates=['input[name="password"]','input[name="passwd"]','input[name="userpw"]','input[type="password"]']
         id_el=next((page.locator(s).first for s in id_candidates if page.locator(s).count()),None)
@@ -25,11 +26,14 @@ class MacroMartCrawler:
         id_el.fill(settings.macromart_id); pw_el.fill(settings.macromart_password)
         for s in ['button[type="submit"]','input[type="submit"]','button:has-text("로그인")','a:has-text("로그인")']:
             if page.locator(s).count():
-                page.locator(s).first.click(); page.wait_for_load_state('domcontentloaded'); break
+                page.locator(s).first.click()
+                try: page.wait_for_load_state('domcontentloaded')
+                except Exception: pass
+                break
         page.wait_for_timeout(1000); return page
 
     @staticmethod
-    def _is_product_url(url: str) -> bool:
+    def _is_product_url(url:str)->bool:
         p=urlparse(url); path=p.path.lower(); q=parse_qs(p.query)
         return (path.endswith('/product/detail.html') and bool(q.get('product_no'))) or ('/product/' in path and ('detail' in path or 'product_no' in q)) or any(k in q for k in ('product_no','goods_no','item_no','prd_no'))
 
@@ -40,98 +44,85 @@ class MacroMartCrawler:
                 href=(el.get_attribute('href') or '').strip()
                 if not href or href.lower().startswith(('javascript:','#','mailto:')): continue
                 u=urljoin(page.url,href).split('#',1)[0]
-                if u.startswith(settings.macromart_base_url) and self._is_product_url(u) and u not in seen:
-                    seen.add(u); found.append(u)
+                if u.startswith(settings.macromart_base_url) and self._is_product_url(u):
+                    if u not in seen: seen.add(u); found.append(u)
             except Exception: pass
         return found
 
-    def product_links(self,page:Page,limit:int=100)->list[str]:
-        seen=set(); out=[]
-        out.extend(self._collect_from_current_page(page,seen))
-        category_urls=[]
+    def _category_urls(self,page:Page)->list[str]:
+        out=[]; seen=set()
         for el in page.locator('a[href]').all():
             try:
                 href=(el.get_attribute('href') or '').strip()
-                if href and not href.lower().startswith(('javascript:','#','mailto:')):
-                    u=urljoin(page.url,href).split('#',1)[0]
-                    if u.startswith(settings.macromart_base_url) and '/category/' in urlparse(u).path.lower() and u not in category_urls: category_urls.append(u)
+                if not href or href.lower().startswith(('javascript:','#','mailto:')): continue
+                u=urljoin(page.url,href).split('#',1)[0]
+                if u.startswith(settings.macromart_base_url) and '/category/' in urlparse(u).path.lower() and u not in seen:
+                    seen.add(u); out.append(u)
             except Exception: pass
-        for cat in category_urls[:80]:
+        return out
+
+    def product_links(self,page:Page,limit:int=100)->list[str]:
+        seen=set(); out=self._collect_from_current_page(page,seen)
+        for cat in self._category_urls(page)[:100]:
             try:
-                page.goto(cat,wait_until='domcontentloaded',timeout=60000); page.wait_for_timeout(300)
+                page.goto(cat,wait_until='domcontentloaded',timeout=60000); page.wait_for_timeout(400)
                 out.extend(self._collect_from_current_page(page,seen))
                 if len(out)>=limit: return out[:limit]
-                for _ in range(8):
-                    nxt=None
-                    for el in page.locator('a[href]').all():
-                        try:
-                            txt=(el.inner_text() or '').strip(); href=(el.get_attribute('href') or '').strip()
-                            if href and txt in {'2','3','4','5','다음','Next','›','>'}:
-                                u=urljoin(page.url,href)
-                                if u.startswith(settings.macromart_base_url) and u != page.url: nxt=u; break
-                        except Exception: pass
-                    if not nxt: break
-                    page.goto(nxt,wait_until='domcontentloaded',timeout=60000); page.wait_for_timeout(250)
-                    before=len(out); out.extend(self._collect_from_current_page(page,seen))
-                    if len(out)==before or len(out)>=limit: break
             except Exception: pass
-        try:
-            html=page.content()
-            for m in re.finditer(r'(?:product_no|goods_no|item_no|prd_no)[^\d]{0,20}(\d+)',html,re.I):
-                u=urljoin(settings.macromart_base_url,f'/product/detail.html?product_no={m.group(1)}')
-                if u not in seen: seen.add(u); out.append(u)
-                if len(out)>=limit: break
-        except Exception: pass
         return out[:limit]
 
-    @staticmethod
-    def _structured_price(page: Page) -> int:
-        for selector in ['meta[itemprop="price"]','meta[property="product:price:amount"]','meta[property="og:price:amount"]']:
-            if page.locator(selector).count():
-                for i in range(min(page.locator(selector).count(),5)):
+    def _structured_price(self,page:Page)->int:
+        for sel in ['meta[itemprop="price"]','meta[property="product:price:amount"]','meta[property="og:price:amount"]']:
+            if page.locator(sel).count():
+                for i in range(min(page.locator(sel).count(),5)):
                     try:
-                        v=page.locator(selector).nth(i).get_attribute('content') or ''
-                        n=money(v)
+                        n=money(page.locator(sel).nth(i).get_attribute('content') or '')
                         if n: return n
                     except Exception: pass
         for script in page.locator('script[type="application/ld+json"]').all():
             try:
-                raw=script.inner_text()
-                data=json.loads(raw)
-                stack=data if isinstance(data,list) else [data]
+                data=json.loads(script.inner_text()); stack=data if isinstance(data,list) else [data]
                 while stack:
                     item=stack.pop()
                     if isinstance(item,dict):
-                        offers=item.get('offers')
-                        if offers: stack.extend(offers if isinstance(offers,list) else [offers])
                         for key in ('price','lowPrice'):
                             n=money(str(item.get(key,'')))
                             if n: return n
+                        offers=item.get('offers')
+                        if offers: stack.extend(offers if isinstance(offers,list) else [offers])
                         stack.extend(v for v in item.values() if isinstance(v,dict))
+                    elif isinstance(item,list): stack.extend(item)
             except Exception: pass
+        for sel in ['[itemprop="price"]','#span_product_price_text','#span_product_price','.xans-product-detail .price','.xans-product-detail .prdPrice','.sale_price','.goods_price','.product-price']:
+            if page.locator(sel).count():
+                try:
+                    loc=page.locator(sel).first; n=money(loc.get_attribute('content') or loc.inner_text())
+                    if n: return n
+                except Exception: pass
         return 0
 
     def detail(self,page:Page,url:str)->dict[str,Any]:
         page.goto(url,wait_until='domcontentloaded',timeout=60000); page.wait_for_timeout(300)
         name=''
-        for s in ['h1','.prdName','.product-name','.goods_name','.item-name']:
+        for s in ['[itemprop="name"]','h1','.prdName','.product-name','.goods_name','.item-name']:
             if page.locator(s).count():
                 try:
-                    name=page.locator(s).first.inner_text().strip()
+                    name=page.locator(s).first.get_attribute('content') or page.locator(s).first.inner_text().strip()
                     if name: break
                 except Exception: pass
-        if not name: name=page.title().strip()
-        price=self._structured_price(page)
-        if not price:
-            for s in ['#span_product_price_text','#span_product_price','.xans-product-detail .price','.xans-product-detail .prdPrice','.sale_price','.goods_price','.product-price']:
-                if page.locator(s).count():
-                    try:
-                        n=money(page.locator(s).first.inner_text())
-                        if n: price=n; break
-                    except Exception: pass
-        body=page.locator('body').inner_text()
+        if not name:
+            try: name=page.title().strip()
+            except Exception: name=''
+        price=self._structured_price(page); body=page.locator('body').inner_text()
+        if not name or name.strip().lower() in GENERIC_NAMES or price<=0:
+            return {'url':url,'error':f'실제 상품이 아닌 페이지: name={name!r}, price={price}'}
         soldout=price==1 or any(t in body for t in ('품절','일시품절','판매중지'))
         stock=0 if soldout else 1
+        for sel in ['meta[itemprop="inventoryLevel"]','[itemprop="inventoryLevel"]','.stock','[class*="stock"]','[id*="stock"]']:
+            if page.locator(sel).count():
+                try:
+                    raw=page.locator(sel).first.get_attribute('content') or page.locator(sel).first.inner_text(); stock=money(raw); break
+                except Exception: pass
         rep=''
         if page.locator('meta[property="og:image"]').count(): rep=page.locator('meta[property="og:image"]').get_attribute('content') or ''
         if not rep:
@@ -142,13 +133,13 @@ class MacroMartCrawler:
                         if rep: break
                     except Exception: pass
         detail_html=''
-        for s in ['.detail','.product-detail','.prdDetail','#detail','[class*="detail"]']:
+        for s in ['#prdDetail','.detail','.product-detail','.prdDetail','[class*="detail"]']:
             if page.locator(s).count():
                 try:
                     detail_html=page.locator(s).first.inner_html()
                     if detail_html: break
                 except Exception: pass
-        if not detail_html: detail_html='<p>'+name+'</p>'
+        if not detail_html: detail_html=f'<p>{name}</p>'
         category=[]
         for s in ['.breadcrumb a','.location a','.category a','[class*="breadcrumb"] a']:
             if page.locator(s).count():
@@ -156,17 +147,13 @@ class MacroMartCrawler:
                     category=[x.strip() for x in page.locator(s).all_inner_texts() if x.strip()]
                     if category: break
                 except Exception: pass
-        return {'url':url,'name':name or '미상 상품','source_price':price,'source_stock':stock,'representative_image':rep,'detail_html':detail_html,'category_path':' > '.join(category)}
+        return {'url':url,'name':name,'source_price':price,'source_stock':stock,'representative_image':rep,'detail_html':detail_html,'category_path':' > '.join(category)}
 
     def collect(self,page:Page,limit:int=100)->list[dict[str,Any]]:
         urls=self.product_links(page,limit); ARTIFACTS.mkdir(exist_ok=True)
         try: (ARTIFACTS/'macromart_product_urls.txt').write_text('\n'.join(urls),encoding='utf-8')
         except Exception: pass
-        results=[]
-        for url in urls:
-            try: results.append(self.detail(page,url))
-            except Exception as exc: results.append({'url':url,'error':str(exc)})
-        return results
+        return [self.detail(page,u) for u in urls]
 
     def crawl(self,limit:int=100)->list[dict[str,Any]]:
         ARTIFACTS.mkdir(exist_ok=True)
