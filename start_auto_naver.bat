@@ -3,15 +3,15 @@ setlocal
 cd /d "%~dp0"
 
 if not exist ".venv\Scripts\python.exe" (
-  echo [ERROR] .venv가 없습니다.
-  echo 먼저 install_auto_naver.bat를 실행하세요.
+  echo [ERROR] Virtual environment not found.
+  echo Run install_auto_naver.bat first.
   pause
   exit /b 1
 )
 
 if not exist ".env" (
-  echo [ERROR] .env가 없습니다.
-  echo 먼저 install_auto_naver.bat를 실행하세요.
+  echo [ERROR] .env file not found.
+  echo Run install_auto_naver.bat first.
   pause
   exit /b 1
 )
@@ -19,8 +19,8 @@ if not exist ".env" (
 echo ========================================
 echo STORMPC AUTO-NAVER
 echo ========================================
-echo 관리자: http://127.0.0.1:8000/admin/login
-echo 종료하려면 이 창에서 Ctrl+C를 누르세요.
+echo Admin: http://127.0.0.1:8000/admin/login
+echo Press CTRL+C in this window to stop.
 echo.
 ".venv\Scripts\python.exe" -m uvicorn app.main_v31:app --host 127.0.0.1 --port 8000
 
