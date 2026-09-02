@@ -1,0 +1,81 @@
+{
+  "inputs": [
+    {
+      "index": 0,
+      "type": "checkbox",
+      "name": "chkbox",
+      "id": "top_banner_box_cloase",
+      "placeholder": null
+    },
+    {
+      "index": 1,
+      "type": "hidden",
+      "name": "banner_action",
+      "id": "banner_action",
+      "placeholder": null
+    },
+    {
+      "index": 2,
+      "type": "text",
+      "name": "keyword",
+      "id": "keyword",
+      "placeholder": ""
+    }
+  ],
+  "buttons": [
+    {
+      "index": 0,
+      "text": "",
+      "id": null,
+      "class": "icoCategory"
+    },
+    {
+      "index": 1,
+      "text": "",
+      "id": null,
+      "class": "btnClose"
+    },
+    {
+      "index": 2,
+      "text": "네비게이션",
+      "id": null,
+      "class": "btnNav eNavFold"
+    },
+    {
+      "index": 3,
+      "text": "\n    \n    \n검색",
+      "id": null,
+      "class": "btnSearch eSearch"
+    },
+    {
+      "index": 4,
+      "text": "삭제",
+      "id": null,
+      "class": "btnDelete displaynone"
+    },
+    {
+      "index": 5,
+      "text": "",
+      "id": null,
+      "class": "btnSearch"
+    },
+    {
+      "index": 6,
+      "text": "",
+      "id": null,
+      "class": "btnClose"
+    },
+    {
+      "index": 7,
+      "text": "오늘 하루 열지 않기",
+      "id": null,
+      "class": "smart-popup-close smart-popup-today"
+    },
+    {
+      "index": 8,
+      "text": "닫기",
+      "id": null,
+      "class": "smart-popup-close"
+    }
+  ]
+}
