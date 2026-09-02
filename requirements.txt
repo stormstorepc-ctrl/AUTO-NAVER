@@ -1,0 +1,11 @@
+fastapi
+uvicorn[standard]
+sqlalchemy
+pydantic
+pydantic-settings
+httpx
+playwright
+python-multipart
+beautifulsoup4
+bcrypt
+pybase64
