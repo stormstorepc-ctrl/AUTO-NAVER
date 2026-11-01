@@ -1,8 +1,7 @@
 name: STORM Claude Pro Daily
 on:
   workflow_dispatch:
-  schedule:
-    - cron: '37 21 * * *' # 06:17 Asia/Seoul; GitHub may delay schedules
+  # Daily execution now uses Claude Pro cloud scheduled tasks, without stored OAuth secrets.
 permissions:
   contents: write
   pull-requests: write
