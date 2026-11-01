@@ -6,6 +6,7 @@ from .db import Base, engine, get_db
 from .models import Product, SyncLog
 from .services import apply_source_update, calculate_sale_price, log
 from .settings import settings
+from .admin_auth import COOKIE as ADMIN_COOKIE, is_admin, valid_credentials, set_admin_cookie
 from .naver import naver_commerce
 from .naver_cafe import naver_cafe
 from .crawlers.macromart import MacroMartCrawler
@@ -14,10 +15,8 @@ from .admin_routes import router as admin_product_router
 Base.metadata.create_all(engine)
 app = FastAPI(title='STORMPC AUTO COMMERCE v3.2')
 app.include_router(admin_product_router)
-ADMIN_COOKIE='stormpc_admin'
-
 def guard(request: Request):
-    if request.cookies.get(ADMIN_COOKIE) != 'ok': return RedirectResponse('/admin/login',303)
+    if not is_admin(request): return RedirectResponse('/admin/login',303)
 
 auth_css='''<style>body{font-family:Arial;background:#f4f6f8}.box{max-width:420px;margin:100px auto;background:#fff;padding:32px;border-radius:16px}input,button{padding:11px;margin:5px;box-sizing:border-box}input{width:100%}button{border:0;border-radius:7px;background:#111827;color:white;cursor:pointer}.err{color:#b91c1c}</style>'''
 
@@ -29,9 +28,9 @@ def login(error:str=''):
     return HTMLResponse(auth_css+f'''<div class="box"><h1>STORMPC 관리자</h1><form method="post"><input name="username" placeholder="관리자 ID" autofocus><input name="password" type="password" placeholder="비밀번호"><button>로그인</button></form><div class="err">{error}</div></div>''')
 
 @app.post('/admin/login')
-def login_post(username:str=Form(...),password:str=Form(...)):
-    if username==settings.admin_username and password==settings.admin_password:
-        r=RedirectResponse('/admin',303); r.set_cookie(ADMIN_COOKIE,'ok',httponly=True,samesite='lax',max_age=28800); return r
+def login_post(request:Request,username:str=Form(...),password:str=Form(...)):
+    if valid_credentials(username,password):
+        r=RedirectResponse('/admin',303); set_admin_cookie(r,request); return r
     return RedirectResponse('/admin/login?error=관리자 정보가 올바르지 않습니다.',303)
 
 @app.get('/admin/logout')
