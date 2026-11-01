@@ -40,9 +40,12 @@ class AdminAuthTests(unittest.TestCase):
             self.assertFalse(auth.verify_session(token))
 
     def test_insecure_defaults_rejected(self):
+        token = auth.issue_session()
         with patch.object(SETTINGS, "admin_password", "ADMIN"):
             self.assertFalse(auth.valid_credentials("storm_operator", "ADMIN"))
-            self.assertFalse(auth.verify_session(auth.issue_session()))
+            self.assertFalse(auth.verify_session(token))
+            with self.assertRaises(RuntimeError):
+                auth.issue_session()
 
     def test_credentials(self):
         self.assertTrue(auth.valid_credentials("storm_operator", "test-only-strong-password"))
