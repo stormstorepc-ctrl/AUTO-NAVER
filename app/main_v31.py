@@ -1,3 +1,4 @@
+from html import escape
 from fastapi import Depends, FastAPI, Form, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from sqlalchemy import func, select, delete
@@ -26,7 +27,7 @@ def health(): return {'status':'ok','version':'v3.2'}
 
 @app.get('/admin/login',response_class=HTMLResponse)
 def login(error:str=''):
-    return HTMLResponse(auth_css+f'''<div class="box"><h1>STORMPC 관리자</h1><form method="post"><input name="username" placeholder="관리자 ID" autofocus><input name="password" type="password" placeholder="비밀번호"><button>로그인</button></form><div class="err">{error}</div></div>''')
+    return HTMLResponse(auth_css+f'''<div class="box"><h1>STORMPC 관리자</h1><form method="post"><input name="username" placeholder="관리자 ID" autofocus><input name="password" type="password" placeholder="비밀번호"><button>로그인</button></form><div class="err">{escape(error)}</div></div>''')
 
 @app.post('/admin/login')
 def login_post(username:str=Form(...),password:str=Form(...)):
@@ -50,8 +51,8 @@ def admin(request:Request,db:Session=Depends(get_db)):
     logs=db.scalars(select(SyncLog).order_by(SyncLog.created_at.desc()).limit(25)).all()
     products=db.scalars(select(Product).order_by(Product.updated_at.desc()).limit(200)).all()
     cafe_ready=naver_cafe.configured; cafe_token=bool(getattr(naver_cafe,'_token',{}).get('access_token'))
-    rows=''.join(f'''<tr><td>{p.id}</td><td><a href="/admin/products/{p.id}/edit">{p.name}</a></td><td>{p.category or ''}</td><td>{p.supply_price:,}</td><td>{p.sale_price:,}</td><td>{p.stock}</td><td>{p.status}</td><td>{'승인' if p.approved else '대기'}</td><td><form method="post" action="/products/{p.id}/approve"><button>승인</button></form><form method="post" action="/products/{p.id}/recalculate"><button>가격 재계산</button></form><form method="post" action="/products/{p.id}/smartstore"><button>스토어 등록</button></form><form method="post" action="/products/{p.id}/cafe"><button>카페 등록</button></form></td></tr>''' for p in products)
-    logrows=''.join(f'<tr><td>{x.created_at}</td><td>{x.action}</td><td>{x.level}</td><td>{x.message}</td></tr>' for x in logs)
+    rows=''.join(f'''<tr><td>{p.id}</td><td><a href="/admin/products/{p.id}/edit">{escape(p.name or "")}</a></td><td>{escape(p.category or "")}</td><td>{p.supply_price:,}</td><td>{p.sale_price:,}</td><td>{p.stock}</td><td>{p.status}</td><td>{'승인' if p.approved else '대기'}</td><td><form method="post" action="/products/{p.id}/approve"><button>승인</button></form><form method="post" action="/products/{p.id}/recalculate"><button>가격 재계산</button></form><form method="post" action="/products/{p.id}/smartstore"><button>스토어 등록</button></form><form method="post" action="/products/{p.id}/cafe"><button>카페 등록</button></form></td></tr>''' for p in products)
+    logrows=''.join(f'<tr><td>{x.created_at}</td><td>{escape(x.action or '')}</td><td>{escape(x.level or '')}</td><td>{escape(x.message or '')}</td></tr>' for x in logs)
     return HTMLResponse(f'''<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style>body{{font-family:Arial;margin:0;background:#f5f7fb;color:#172033}}header{{background:#111827;color:#fff;padding:18px 24px;display:flex;justify-content:space-between}}main{{padding:20px;overflow:auto}}.cards{{display:grid;grid-template-columns:repeat(5,minmax(140px,1fr));gap:12px}}.card{{background:white;padding:16px;border-radius:14px}}table{{width:100%;border-collapse:collapse;background:#fff;margin-top:16px}}th,td{{padding:9px;border-bottom:1px solid #e5e7eb;white-space:nowrap;text-align:left}}form{{display:inline}}button{{padding:7px 9px;margin:2px}}a{{color:#111827;font-weight:700}}.notice{{background:#fff;padding:14px;border-radius:12px;margin:16px 0}}</style></head><body><header><b>STORMPC AUTO COMMERCE v3.2</b><a style="color:#fff" href="/admin/logout">로그아웃</a></header><main><div class="cards"><div class="card">전체<h2>{total}</h2></div><div class="card">승인대기<h2>{pending}</h2></div><div class="card">승인완료<h2>{approved}</h2></div><div class="card">스토어등록<h2>{listed}</h2></div><div class="card">품절<h2>{soldout}</h2></div></div><div class="notice"><b>네이버 카페:</b> {'연결됨' if cafe_token else '미연결'} / API 설정 {'완료' if cafe_ready else '필요'} &nbsp; <a href="/naver/login?reprompt=1">네이버 카페 재인증</a></div><p><form method="post" action="/crawl/macromart"><button>매크로마트 전체 수집</button></form></p><h2>상품관리</h2><table><tr><th>ID</th><th>상품명</th><th>카테고리</th><th>공급가</th><th>판매가</th><th>재고</th><th>상태</th><th>승인</th><th>작업</th></tr>{rows}</table><h2>작업로그</h2><table><tr><th>시간</th><th>작업</th><th>레벨</th><th>내용</th></tr>{logrows}</table></main></body></html>''')
 
 @app.get('/naver/login')
