@@ -16,15 +16,17 @@ def calculate_sale_price(supply_price: int) -> int:
 def apply_source_update(db: Session, p: Product, source_price: int, source_stock: int):
     old = p.last_source_price
     p.supply_price = source_price
-    p.last_source_price = source_price
     p.stock = max(0, source_stock - settings.default_safety_stock)
     if source_price == 1 or source_stock <= settings.default_safety_stock:
+        p.last_source_price = source_price
         p.sale_price = 0
         p.status = 'SOLD_OUT'
     else:
         if old and abs(source_price - old) / old > settings.max_auto_price_change_rate:
+            # 검토 대기 중에는 기준가를 유지해야 다음 동기화에서 검토가 우회되지 않는다.
             p.status = 'PRICE_REVIEW'
         else:
+            p.last_source_price = source_price
             p.sale_price = max(calculate_sale_price(source_price), settings.default_min_sale_price)
             p.status = 'PENDING'
     log(db, 'SOURCE_SYNC', f'공급가={source_price}, 재고={source_stock}, 상태={p.status}', p.id)
