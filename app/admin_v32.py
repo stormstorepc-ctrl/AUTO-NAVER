@@ -8,11 +8,12 @@ from .db import get_db
 from .models import Product
 from .services import calculate_sale_price, log
 from .settings import settings
+from .admin_auth import is_admin
 
 COOKIE='stormpc_admin'
 
 def guard(request: Request):
-    if request.cookies.get(COOKIE) != 'ok':
+    if not is_admin(request):
         return RedirectResponse('/admin/login', 303)
 
 def product_page(p: Product, error: str='') -> str:

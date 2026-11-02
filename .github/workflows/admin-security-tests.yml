@@ -1,0 +1,27 @@
+name: Admin Security Tests
+on:
+  pull_request:
+    paths:
+      - 'app/admin_auth.py'
+      - 'app/main.py'
+      - 'app/main_v31.py'
+      - 'app/admin_routes.py'
+      - 'app/admin_v32.py'
+      - 'tests/**'
+      - '.github/workflows/admin-security-tests.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  admin-security:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Compile Python files
+        run: python -m compileall -q app tests
+      - name: Run authentication regression tests
+        run: python -m unittest discover -s tests -v

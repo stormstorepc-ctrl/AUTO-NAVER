@@ -7,14 +7,13 @@ from .db import Base, engine, get_db
 from .models import Product, SyncLog
 from .services import apply_source_update, calculate_sale_price, log
 from .settings import settings
+from .admin_auth import COOKIE as ADMIN_COOKIE, is_admin, valid_credentials, set_admin_cookie
 
 Base.metadata.create_all(engine)
 app = FastAPI(title='STORMPC AUTO COMMERCE v3')
 
-ADMIN_COOKIE = 'stormpc_admin'
-
 def admin_ok(request: Request) -> bool:
-    return request.cookies.get(ADMIN_COOKIE) == 'ok'
+    return is_admin(request)
 
 def require_admin(request: Request):
     if not admin_ok(request):
@@ -31,10 +30,10 @@ def admin_login(error: str = ''):
     return HTMLResponse(auth_css + f'''<div class="box"><h1>STORMPC 관리자</h1><form method="post"><input name="username" placeholder="관리자 ID" autofocus><input name="password" type="password" placeholder="비밀번호"><button>로그인</button></form><div class="err">{error}</div></div>''')
 
 @app.post('/admin/login')
-def admin_login_post(username: str = Form(...), password: str = Form(...)):
-    if username == settings.admin_username and password == settings.admin_password:
+def admin_login_post(request: Request, username: str = Form(...), password: str = Form(...)):
+    if valid_credentials(username, password):
         r = RedirectResponse('/admin', status_code=303)
-        r.set_cookie(ADMIN_COOKIE, 'ok', httponly=True, samesite='lax')
+        set_admin_cookie(r, request)
         return r
     return RedirectResponse('/admin/login?error=관리자 정보가 올바르지 않습니다.', status_code=303)
 
