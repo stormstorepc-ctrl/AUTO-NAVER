@@ -1,4 +1,4 @@
-from math import ceil
+from decimal import Decimal, ROUND_CEILING
 from sqlalchemy.orm import Session
 from .models import Product, SyncLog
 from .settings import settings
@@ -9,7 +9,8 @@ def log(db: Session, action: str, message: str, product_id: int | None = None, l
 def calculate_sale_price(supply_price: int) -> int:
     if supply_price <= 0:
         return 0
-    raw = ceil(supply_price * (1 + settings.default_margin_rate))
+    # float 오차(예: 225000*1.08=243000.00000000003)로 한 단위 올림되는 것을 막기 위해 Decimal 사용
+    raw = int((Decimal(supply_price) * (1 + Decimal(str(settings.default_margin_rate)))).to_integral_value(ROUND_CEILING))
     unit = max(settings.price_round_unit, 1)
     return ((raw + unit - 1) // unit) * unit
 
