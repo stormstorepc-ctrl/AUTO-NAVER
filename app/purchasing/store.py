@@ -8,6 +8,7 @@ import sqlite3
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from typing import Any, Iterator
+from .pricing import ValidationError
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS products(
@@ -111,12 +112,14 @@ class Store:
                   (iso(now_utc()), actor, event, canonical(redact(detail)) if detail is not None else None))
 
     # ---- 상품 ----
-    def upsert_products(self, products: list[dict], actor: str = "import") -> dict:
+    def upsert_products(self, products: list[dict], actor: str = "import", expected_version: int | None = None) -> dict:
         added = updated = unchanged = 0
         with self.tx() as c:
             for p in products:
                 row = c.execute("SELECT id,data,version FROM products WHERE source=? AND source_product_id=?",
                                 (p["source"], p["source_product_id"])).fetchone()
+                if expected_version is not None and (row is None or row["version"] != expected_version):
+                    raise ValidationError("상품 내용이 변경됐습니다. 화면을 새로 열고 다시 진행하세요.")
                 ts = iso(now_utc())
                 if row is None:
                     cur = c.execute("INSERT INTO products(source,source_product_id,data,created_at,updated_at) VALUES(?,?,?,?,?)",
@@ -152,11 +155,13 @@ class Store:
 
     # ---- 번역 ----
     def add_translation(self, product_id: int, title_ko: str, description_ko: str, option_names: dict[str, str],
-                        reviewed: bool = False) -> int:
+                        reviewed: bool = False, expected_version: int | None = None) -> int:
         with self.tx() as c:
             p = self.get_product(c, product_id)
             if p is None:
                 raise KeyError(product_id)
+            if expected_version is not None and p["version"] != expected_version:
+                raise ValidationError("상품 원문이 변경됐습니다. 화면을 새로 열고 번역을 확인하세요.")
             v = (c.execute("SELECT COALESCE(MAX(version),0) FROM translations WHERE product_id=?", (product_id,)).fetchone()[0]) + 1
             src_hash = sha({"t": p["title_src"], "d": p["description_src"], "o": {o["source_option_id"]: o["name"] for o in p["options"]}})
             c.execute("INSERT INTO translations(product_id,version,title_ko,description_ko,option_names,status,source_hash,created_at) "
@@ -166,6 +171,14 @@ class Store:
 
     def review_translation(self, product_id: int, version: int, actor: str) -> None:
         with self.tx() as c:
+            p = self.get_product(c, product_id)
+            tr = self.latest_translation(c, product_id)
+            if not p or not tr or tr["version"] != version:
+                raise ValidationError("최신 번역을 다시 확인하세요.")
+            source_hash = sha({"t": p["title_src"], "d": p["description_src"],
+                               "o": {o["source_option_id"]: o["name"] for o in p["options"]}})
+            if tr["source_hash"] != source_hash:
+                raise ValidationError("원문이 변경됐습니다. 번역을 다시 저장하고 검수하세요.")
             c.execute("UPDATE translations SET status='reviewed' WHERE product_id=? AND version=?", (product_id, version))
             self.audit(c, actor, "translation_reviewed", {"product_id": product_id, "version": version})
 
