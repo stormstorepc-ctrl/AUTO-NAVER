@@ -103,3 +103,8 @@ def test_start_and_stop_real_server(tmp_path):
     finally:
         if proc.poll() is None:
             proc.kill()
+
+
+@pytest.mark.skipif(os.name == "nt", reason="non-Windows no-op path")
+def test_quick_edit_disable_is_noop_off_windows():
+    assert ls.disable_console_quick_edit() is False

@@ -26,6 +26,7 @@ def import_sample(c):
     r = c.post('/import', headers=ORIGIN, data={'format': 'json'},
                files={'file': ('demo.json', response.content, 'application/json')})
     assert r.status_code == 200 and '새 상품 1개' in r.text
+    assert '오류 없음' in r.text and '[]' not in r.text
 
 
 def ready(c):
@@ -124,3 +125,9 @@ def test_old_translation_version_not_reviewed(store):
     old = form_values(c.get('/product/1', headers=AUTH), '/product/1/translation/review')
     store.add_translation(1, '새 초안', '새 설명', {'WHITE': '흰색', 'BLACK': '검정'})
     assert c.post('/product/1/translation/review', headers=ORIGIN, data={**old, 'confirmed': 'yes'}).status_code == 400
+
+
+def test_import_result_lists_rejections_readably(store):
+    from app.purchasing.web import rejected_list
+    html = rejected_list([{"index": 0, "source_product_id": "<P1>", "errors": ["가격 없음", "무게 없음"]}])
+    assert "1번째 상품" in html and "&lt;P1&gt;" in html and "가격 없음 / 무게 없음" in html

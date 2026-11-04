@@ -1,8 +1,7 @@
 # Windows 설치·시작 오류 수정 기록 (T-COMMERCE-001)
 
-상태: **코드 수정 + Linux 검증만 완료. Windows 실기 검증은 미실행.**
-이 작업 환경(Linux 클라우드 컨테이너)에는 Windows, cmd.exe, PowerShell, wine이 없다.
-따라서 아래 "Windows 설치 완료" 또는 "Windows 검증 완료"로 표시하지 않는다.
+상태: 코드 수정 + Linux 자동 검증 완료. **Windows 실행은 사용자가 커밋 ce20793 ZIP으로 직접 수행하고 화면으로 보고했다(5절).**
+Claude 작업 환경(Linux 클라우드 컨테이너)에는 Windows, cmd.exe, PowerShell, wine이 없어 Claude가 Windows에서 직접 실행하지는 않았다.
 
 ## 1. 설치 실패 — `No runtime installed that matches 3.12`
 
@@ -65,3 +64,26 @@ AllSigned이거나, RemoteSigned + 인터넷에서 받은 ZIP 표시(Mark of the
 2. `purchasing_start.bat` → 암호 입력(화면에 표시되지 않아야 함) → Chrome에서 http://127.0.0.1:8765.
 3. 다른 cmd 창에서 `purchasing_stop.bat` → `Stopped purchasing review PID ...`.
 4. 깨진 .venv 재현: `.venv\pyvenv.cfg`의 home을 없는 경로로 바꾼 뒤 1번 재실행 → `.venv.backup-*` 생성 후 재설치되는지 확인.
+
+## 5. 사용자 Windows 실행 결과 (2026-11-05, 사용자 보고)
+
+대상: 커밋 ce20793의 브랜치 ZIP. 사용자가 실제 Windows PC에서 실행하고 화면 캡처로 보고했다.
+Windows 버전과 설치된 Python 버전은 보고받지 못했다.
+
+| 단계 | 결과 | 근거 |
+|---|---|---|
+| `purchasing_install.bat` 설치 | 성공 | 사용자 보고, 이후 단계 진행 |
+| `purchasing_start.bat` 시작 (서명 오류 없음) | 성공 | 검토 화면 표시 캡처 |
+| http://127.0.0.1:8765 로그인 후 검토 화면 | 성공 | 캡처 ("후보 · 스마트스토어") |
+| 샘플 상품 가져오기 | 성공 | 캡처 ("유효 1개 · 거부 0개 · 새 상품 1개") |
+| 가격 계산 → 번역 검수 → 승인 → 모의 등록 → ZIP 다운로드 | 성공 | 사용자 보고 ("검토용까지 다했다") |
+| `purchasing_stop.bat` 종료 | **결과 미보고** | |
+| 중단 후 재설치, 깨진 .venv 복구 | **미실행** | |
+| 서명 제한(AllSigned/RemoteSigned+MOTW) 여부 | 사용자 PC 정책 미확인. 이전에 서명 오류가 났던 같은 PC에서 오류 없이 시작됨 | |
+
+### 실행 중 발견한 문제와 후속 수정
+- 첫 접속 때 Chrome이 계속 로딩만 했다. 사용자 안내(검은 창에서 Esc) 후 접속됐다.
+  원인은 cmd 창 QuickEdit "선택" 모드로 콘솔 출력이 막힌 것으로 **추정**하며, 확정은 못 했다.
+  → `local_server.start`에서 해당 콘솔의 QuickEdit을 끄도록 수정했다. 이 콘솔에만 적용되고 창을 닫으면 원래대로 돌아간다. Windows 재확인은 아직 하지 않았다.
+- 가져오기 결과에 거부 목록이 `[]`로 표시돼 알아보기 어려웠다.
+  → 오류가 없으면 "오류 없음", 거부 상품이 있으면 "N번째 상품 (ID): 사유" 목록으로 표시하도록 바꿨다.

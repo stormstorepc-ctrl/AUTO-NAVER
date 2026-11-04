@@ -38,6 +38,18 @@ def percent(value):
     return "-" if value is None else f"{Decimal(str(value)) * 100:.2f}%"
 
 
+def rejected_list(rejected: list[dict]) -> str:
+    """Readable rejection reasons for the import result page."""
+    if not rejected:
+        return "<p>오류 없음 · 모든 상품을 가져왔습니다.</p>"
+    items = "".join(
+        f"<li>{E(str(r.get('index', '?') + 1 if isinstance(r.get('index'), int) else '?'))}번째 상품"
+        f"{' (' + E(r['source_product_id']) + ')' if r.get('source_product_id') else ''}: "
+        f"{E(' / '.join(map(str, r.get('errors') or ['알 수 없는 오류'])))}</li>"
+        for r in rejected)
+    return f"<p>가져오지 못한 상품</p><ul>{items}</ul>"
+
+
 def create_app(store: Store, username: str, password: str, allow_hosts: tuple[str, ...] = ()) -> FastAPI:
     if not password or len(password) < 8:
         raise RuntimeError("검토 화면 비밀번호(PURCHASING_REVIEW_PASSWORD, 8자 이상)가 필요합니다. 기본값은 없습니다.")
@@ -167,7 +179,7 @@ def create_app(store: Store, username: str, password: str, allow_hosts: tuple[st
         counts = store.upsert_products(report.accepted, actor)
         return page(f"<h1>가져오기 결과</h1><p>유효 {len(report.accepted)}개 · 거부 {len(report.rejected)}개</p>"
                     f"<p>새 상품 {counts['added']}개 · 변경 {counts['updated']}개 · 동일 {counts['unchanged']}개</p>"
-                    f"<pre>{E(json.dumps(report.rejected, ensure_ascii=False, indent=2))}</pre><a href='/'>상품 목록에서 계속</a>")
+                    f"{rejected_list(report.rejected)}<a href='/'>상품 목록에서 계속</a>")
 
     @app.post("/product/{pid}/translation")
     async def save_translation(pid: int, request: Request):

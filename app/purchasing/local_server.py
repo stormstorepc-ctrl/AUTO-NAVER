@@ -127,6 +127,30 @@ def read_password(environ=os.environ, prompt=getpass.getpass) -> str:
     return password
 
 
+def disable_console_quick_edit() -> bool:
+    """Stop a click in the console window from freezing the server.
+
+    With QuickEdit on, clicking the cmd window enters "Select" mode and blocks
+    console output; uvicorn's next log line then blocks and Chrome keeps loading.
+    Only this console's input mode changes; it resets when the window closes.
+    """
+    if os.name != "nt":
+        return False
+    try:
+        import ctypes
+        from ctypes import wintypes
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel32.GetStdHandle.restype = wintypes.HANDLE
+        handle = kernel32.GetStdHandle(-10)  # STD_INPUT_HANDLE
+        mode = wintypes.DWORD()
+        if not handle or not kernel32.GetConsoleMode(handle, ctypes.byref(mode)):
+            return False
+        ENABLE_QUICK_EDIT_MODE, ENABLE_EXTENDED_FLAGS = 0x0040, 0x0080
+        return bool(kernel32.SetConsoleMode(handle, (mode.value | ENABLE_EXTENDED_FLAGS) & ~ENABLE_QUICK_EDIT_MODE))
+    except (OSError, AttributeError):
+        return False
+
+
 def start(state_path: Path = STATE_FILE) -> int:
     os.chdir(ROOT)
     if state_is_live(read_state(state_path)):
@@ -141,6 +165,7 @@ def start(state_path: Path = STATE_FILE) -> int:
     app = create_app(Store(os.environ.get("PURCHASING_DB", "purchasing.db")),
                      os.environ.get("PURCHASING_REVIEW_USER", "reviewer"), password)
     del password
+    disable_console_quick_edit()  # after getpass, which needs normal console input
     me = process_identity(os.getpid())
     if me:
         state_path.write_text(json.dumps({"pid": os.getpid(), **me}), encoding="utf-8")
