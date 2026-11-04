@@ -1,5 +1,6 @@
 .env
 .venv/
+.venv.backup-*/
 __pycache__/
 *.pyc
 *.db
