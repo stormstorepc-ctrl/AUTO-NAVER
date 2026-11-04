@@ -77,7 +77,7 @@ Windows 버전과 설치된 Python 버전은 보고받지 못했다.
 | http://127.0.0.1:8765 로그인 후 검토 화면 | 성공 | 캡처 ("후보 · 스마트스토어") |
 | 샘플 상품 가져오기 | 성공 | 캡처 ("유효 1개 · 거부 0개 · 새 상품 1개") |
 | 가격 계산 → 번역 검수 → 승인 → 모의 등록 → ZIP 다운로드 | 성공 | 사용자 보고 ("검토용까지 다했다") |
-| `purchasing_stop.bat` 종료 | **확인 불가** — 창이 바로 닫혀 결과 문구를 볼 수 없었다 (사용자 보고) | |
+| `purchasing_stop.bat` 종료 | 성공 (d0ac15f) — ce20793에서는 창이 바로 닫혀 확인 불가였음 | 사용자가 붙여넣은 출력 `Stopped purchasing review PID 30872.` |
 | 중단 후 재설치, 깨진 .venv 복구 | **미실행** | |
 | 서명 제한(AllSigned/RemoteSigned+MOTW) 여부 | 사용자 PC 정책 미확인. 이전에 서명 오류가 났던 같은 PC에서 오류 없이 시작됨 | |
 
@@ -90,3 +90,5 @@ Windows 버전과 설치된 Python 버전은 보고받지 못했다.
 - 사용자 보고(b677e80 이후): "크롬은 이제 잘 된다". 다만 QuickEdit 수정이 들어간 ZIP으로 확인했는지는 보고받지 못했다.
 - `purchasing_stop.bat`은 끝나자마자 창이 닫혀 성공/거부 메시지를 읽을 수 없었다.
   → 결과를 표시한 뒤 `pause`로 창을 유지하도록 수정했다. Windows 재확인은 아직 하지 않았다.
+- 사용자 확인(d0ac15f): `purchasing_stop.bat` 실행 결과 `Stopped purchasing review PID 30872.` 표시 후 창 유지.
+  Windows에서 PID·생성 시각 확인과 taskkill 종료 경로가 동작함을 사용자 실행으로 확인했다.
