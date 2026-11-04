@@ -31,7 +31,7 @@ python -m pytest -q tests/purchasing
 ```
 
 ## Windows 실행 (미검증)
-- 최초 설치: Python 3.12 설치 후 `purchasing_install.bat`을 실행한다.
+- 최초 설치: `purchasing_install.bat`을 실행한다. 최신 Python Install Manager(`py`)가 있고 Python 3.12 런타임이 없으면 `py install 3.12`로 공식 런타임을 설치한 뒤 가상환경·의존성 설치를 이어간다. 인터넷 연결이 필요하다. 구형 실행기이거나 자동 설치가 실패하면 원인을 표시하고 중지한다. 이 경우 공식 Python Windows 다운로드에서 3.12를 설치하고 다시 실행한다.
 - 시작: `purchasing_start.bat` 실행 → 8자 이상 암호 입력 → Chrome에서 http://127.0.0.1:8765 열기 (Basic 인증, 사용자 `reviewer`). 암호는 파일에 저장하지 않는다.
 - 중지: `purchasing_stop.bat` (같은 가상환경의 검토 앱인지 확인 후 종료; 다른 프로세스면 거부) / 재시작: stop 후 start
 - 예약(월 09:00 제안값): `schtasks /Create /SC WEEKLY /D MON /ST 09:00 /TN "PurchasingWeeklyMock" /TR "\"%CD%\purchasing_weekly.bat\""` — 실행 전 사용자 확인 필요. 이 저장소 작업에서는 예약을 만들지 않았다.
