@@ -34,7 +34,8 @@ python -m pytest -q tests/purchasing
 - 최초 설치: `purchasing_install.bat`을 실행한다. 최신 Python Install Manager(`py`)가 있고 Python 3.12 런타임이 없으면 `py install 3.12`로 공식 런타임을 설치한 뒤 가상환경·의존성 설치를 이어간다. 인터넷 연결이 필요하다. 구형 실행기이거나 자동 설치가 실패하면 원인을 표시하고 중지한다. 이 경우 공식 Python Windows 다운로드에서 3.12를 설치하고 다시 실행한다.
 - 이전 설치 실패 후 다시 실행할 때는 `.venv\Scripts\python.exe`의 존재뿐 아니라 실제 실행과 Python 버전을 검사한다. 실행되지 않으면 런타임을 확보한 뒤 기존 `.venv`를 `.venv.backup-...`로 보존하고 새 환경을 만든다. 상품 DB와 암호 설정 파일은 삭제하지 않는다. 마지막에 검토 앱 import까지 검사한 뒤에만 설치 완료를 표시한다. Windows 실기 재검증은 아직 필요하다.
 - 시작: `purchasing_start.bat` 실행 → 8자 이상 암호 입력 → Chrome에서 http://127.0.0.1:8765 열기 (Basic 인증, 사용자 `reviewer`). 암호는 파일에 저장하지 않는다.
-- 중지: `purchasing_stop.bat` (같은 가상환경의 검토 앱인지 확인 후 종료; 다른 프로세스면 거부) / 재시작: stop 후 start
+- 시작·중지는 PowerShell 스크립트(.ps1) 없이 `.venv\Scripts\python.exe -m app.purchasing.local_server start|stop`으로 실행된다. 실행 정책·스크립트 서명 설정을 바꾸지 않는다.
+- 중지: `purchasing_stop.bat` (시작 시 기록한 PID·프로세스 생성 시각이 일치하는 검토 앱만 종료; 8765 포트를 다른 프로세스가 쓰면 거부) / 재시작: stop 후 start
 - 예약(월 09:00 제안값): `schtasks /Create /SC WEEKLY /D MON /ST 09:00 /TN "PurchasingWeeklyMock" /TR "\"%CD%\purchasing_weekly.bat\""` — 실행 전 사용자 확인 필요. 이 저장소 작업에서는 예약을 만들지 않았다.
 - 위 .bat 파일과 예약은 Linux 환경에서 작성만 했고 **Windows 실환경(잠금/절전/재부팅/미로그인) 검증은 하지 않았다.**
 

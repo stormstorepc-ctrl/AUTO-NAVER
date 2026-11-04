@@ -7,3 +7,4 @@ __pycache__/
 artifacts/
 .naver_cafe_token.json
 .naver_cafe_state
+.purchasing_server.json
