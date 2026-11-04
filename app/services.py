@@ -16,13 +16,15 @@ def calculate_sale_price(supply_price: int) -> int:
 def apply_source_update(db: Session, p: Product, source_price: int, source_stock: int):
     old = p.last_source_price
     p.supply_price = source_price
-    p.last_source_price = source_price
+    # 공급가 1원은 품절 표시용 값이므로 가격 변동 기준가로 저장하지 않는다.
+    if source_price != 1:
+        p.last_source_price = source_price
     p.stock = max(0, source_stock - settings.default_safety_stock)
     if source_price == 1 or source_stock <= settings.default_safety_stock:
         p.sale_price = 0
         p.status = 'SOLD_OUT'
     else:
-        if old and abs(source_price - old) / old > settings.max_auto_price_change_rate:
+        if old and old != 1 and abs(source_price - old) / old > settings.max_auto_price_change_rate:
             p.status = 'PRICE_REVIEW'
         else:
             p.sale_price = max(calculate_sale_price(source_price), settings.default_min_sale_price)
