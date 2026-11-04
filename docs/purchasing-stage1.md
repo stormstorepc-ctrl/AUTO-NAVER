@@ -32,9 +32,18 @@ python -m pytest -q tests/purchasing
 
 ## Windows 실행 (미검증)
 - 시작: `set PURCHASING_REVIEW_PASSWORD=<8자 이상>` 후 `purchasing_start.bat` → http://127.0.0.1:8765 (Basic 인증, 사용자 `reviewer`)
-- 중지: `purchasing_stop.bat` / 재시작: stop 후 start
+- 중지: `purchasing_stop.bat` (같은 가상환경의 검토 앱인지 확인 후 종료; 다른 프로세스면 거부) / 재시작: stop 후 start
 - 예약(월 09:00 제안값): `schtasks /Create /SC WEEKLY /D MON /ST 09:00 /TN "PurchasingWeeklyMock" /TR "\"%CD%\purchasing_weekly.bat\""` — 실행 전 사용자 확인 필요. 이 저장소 작업에서는 예약을 만들지 않았다.
 - 위 .bat 파일과 예약은 Linux 환경에서 작성만 했고 **Windows 실환경(잠금/절전/재부팅/미로그인) 검증은 하지 않았다.**
 
 ## 남은 제약
 번역 수치/단위 자동 대조(2단계), 근거 기반 트렌드 점수(2단계), 타오바오·실채널 연동(3~4단계), Windows 실환경 검증(5단계)은 미구현/미검증. 검토 화면에는 번역 입력/검수 폼이 없고 현재는 API(`Store.add_translation`/`review_translation`)와 가져오기 스크립트로만 처리한다.
+
+## 2026-11-05 후속 수정
+- 수입된 옵션의 비용 미입력은 확인된 0원과 구분하여 견적을 보류한다. 비용 6개 필드(중국 배송, 검수/포장, 판매자 통관, 국내 배송, 결제비율, 충당금 비율)는 0인 경우도 명시한다.
+- 원가/옵션 변경은 재견적을, 원문 변경은 번역 재검수를 요구한다. 현재 옵션과 견적 입력이 일치해야 재승인할 수 있다.
+- CSV 공통 상품 정보가 옵션 행마다 다르면 상품 그룹 전체를 거부한다. 잘못된 제한 플래그는 해당 상품만 거부한다.
+- 기존 판매가 평가에도 수수료 누락/만료 검사와 고정비 검증을 적용한다.
+- 조회 미발견은 처리 중인 외부 요청이 없다는 증거가 아니므로 unknown을 유지한다. 자동 재POST하지 않는다.
+- Windows의 Asia/Seoul 시간대 데이터를 위해 tzdata를 설치 의존성에 추가했다. 종료 시 다른 프로그램의 프로세스를 종료하지 않도록 실행 파일과 명령을 확인한다.
+- Windows 실환경 및 종료 PowerShell 실행은 미검증이다. 번역 입력 폼 등 기존 1단계 UI 제약과 실제 채널 차단은 남아 있다.

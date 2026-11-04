@@ -100,12 +100,12 @@ class OptionCostInput:
     quantity: int = 1
     weight_g: Decimal | None = None
     dims_cm: tuple[Decimal, Decimal, Decimal] | None = None
-    china_shipping_krw: Decimal = ZERO
-    handling_krw: Decimal = ZERO             # 검수/포장
-    seller_customs_krw: Decimal = ZERO       # 판매자 부담 통관비·세금
-    domestic_shipping_krw: Decimal = ZERO
-    payment_fee_rate: Decimal = ZERO         # 환전/결제 비용 (상품대금 기준)
-    reserve_rate: Decimal = ZERO             # 반품/불량 충당금 (위 합계 기준)
+    china_shipping_krw: Decimal | None = ZERO
+    handling_krw: Decimal | None = ZERO             # 검수/포장
+    seller_customs_krw: Decimal | None = ZERO       # 판매자 부담 통관비·세금
+    domestic_shipping_krw: Decimal | None = ZERO
+    payment_fee_rate: Decimal | None = ZERO         # 환전/결제 비용 (상품대금 기준)
+    reserve_rate: Decimal | None = ZERO             # 반품/불량 충당금 (위 합계 기준)
 
 
 @dataclass(frozen=True)
@@ -165,12 +165,16 @@ def landed_cost(opt: OptionCostInput, fx: FxRate, ship: ShippingRateCard, now: d
         raise ValidationError(f"비정상 수량: {opt.quantity!r}")
     if fx.currency != opt.currency:
         raise ValidationError(f"환율 통화({fx.currency})와 상품 통화({opt.currency})가 다릅니다")
-    for n in ("china_shipping_krw", "handling_krw", "seller_customs_krw", "domestic_shipping_krw"):
-        _nonneg(getattr(opt, n), n)
-    _rate(opt.payment_fee_rate, "payment_fee_rate")
-    _rate(opt.reserve_rate, "reserve_rate")
-
     blockers: list[str] = []
+    for n in ("china_shipping_krw", "handling_krw", "seller_customs_krw", "domestic_shipping_krw",
+              "payment_fee_rate", "reserve_rate"):
+        value = getattr(opt, n)
+        if value is None:
+            blockers.append(f"{n}: 비용 미확인 (0원도 명시 필요)")
+        elif n.endswith("rate"):
+            _rate(value, n)
+        else:
+            _nonneg(value, n)
     if fx.krw_per_unit is None:
         blockers.append("환율 없음")
     else:
@@ -290,8 +294,13 @@ def evaluate_existing_price(opt: OptionCostInput, fx: FxRate, ship: ShippingRate
     """이미 정해진 표시가(예: 쿠폰·할인 적용 후)의 실제 마진을 평가한다. 미달이면 below_target."""
     now = _aware(now)
     parts, blockers = landed_cost(opt, fx, ship, now)
-    if parts is None or channel.commission_rate is None:
-        return PriceQuote(channel.channel, "incomplete", False, list(blockers) or ["채널 수수료율 없음"])
+    if channel.commission_rate is None:
+        blockers.append("채널 수수료율 없음")
+    if not sale.free_shipping and channel.shipping_fee_rate is None:
+        blockers.append("채널 배송비 수수료율 없음")
+    _check_age("채널 수수료", channel.observed_at, "channel", now, blockers)
+    if parts is None or blockers:
+        return PriceQuote(channel.channel, "incomplete", False, blockers)
     if list_price <= 0:
         raise ValidationError("판매가는 0보다 커야 합니다")
     rp = _rate(channel.commission_rate, "commission_rate")
@@ -303,7 +312,10 @@ def evaluate_existing_price(opt: OptionCostInput, fx: FxRate, ship: ShippingRate
     comm = won_half_up(paid_p * rp)
     sfee = ZERO if sale.free_shipping else won_half_up(s_cust * rs)
     total = paid_p + s_cust
-    profit, mg = _margin(total, C, comm, sfee, channel.fixed_fee)
+    fixed = _nonneg(channel.fixed_fee, "fixed_fee")
+    if total <= 0:
+        raise ValidationError("고객 결제액은 0보다 커야 합니다")
+    profit, mg = _margin(total, C, comm, sfee, fixed)
     ok = mg >= _rate(sale.target_margin, "target_margin")
     return PriceQuote(channel.channel, "ok" if ok else "below_target", ok,
                       [] if ok else [f"마진 미달 {mg.quantize(Decimal('0.0001'))}"], int(list_price), int(paid_p),

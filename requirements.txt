@@ -9,3 +9,5 @@ python-multipart
 beautifulsoup4
 bcrypt
 pybase64
+
+tzdata

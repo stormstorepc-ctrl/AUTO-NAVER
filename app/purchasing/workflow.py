@@ -49,7 +49,7 @@ def _ser(o: Any) -> Any:
 
 
 def option_input(o: dict) -> OptionCostInput:
-    g = lambda k, d="0": Decimal(o.get(k, d))
+    g = lambda k: Decimal(o[k]) if o.get(k) not in (None, "") else None
     return OptionCostInput(
         unit_price=Decimal(o["unit_price"]), currency=o["currency"], quantity=o["quantity"],
         weight_g=Decimal(o["weight_g"]) if o.get("weight_g") else None,
@@ -110,10 +110,24 @@ def blockers_before_approval(store: Store, c, product_id: int, channel: str, now
     tr = store.latest_translation(c, product_id)
     if tr is None or tr["status"] != "reviewed":
         b.append("검수 완료된 번역 없음")
+    if tr is not None:
+        source_hash = sha({"t": p["title_src"], "d": p["description_src"],
+                           "o": {o["source_option_id"]: o["name"] for o in p["options"]}})
+        if tr["source_hash"] != source_hash:
+            b.append("원문 변경: 번역 재검수 필요")
+        names = tr["option_names"]
+        if set(names) != {o["source_option_id"] for o in p["options"]} or not all(
+                isinstance(v, str) and v.strip() for v in names.values()):
+            b.append("전 옵션 번역 없음")
     qs = store.latest_quotes(c, product_id, channel)
+    options = {o["source_option_id"]: o for o in p["options"]}
+    if {q["source_option_id"] for q in qs} != set(options):
+        b.append("현재 옵션과 견적 불일치")
     if len(qs) != len(p["options"]):
         b.append("전 옵션 견적 없음")
     for q in qs:
+        if q["inputs"].get("option") != options.get(q["source_option_id"]):
+            b.append(f"옵션 {q['source_option_id']} 원가/내용 변경: 재견적 필요")
         r = q["result"]
         if not r.get("publishable") or r.get("status") != "ok":
             b.append(f"옵션 {q['source_option_id']} 견적 확정 불가: {', '.join(r.get('blockers') or [r.get('status')])}")
@@ -312,13 +326,15 @@ def _finish(store: Store, pub_id: int, product_id: int, outcome: str, remote: st
 
 def recover_stale_claims(store: Store, adapter: ChannelAdapter, older_than: timedelta = timedelta(minutes=10),
                          now: datetime | None = None) -> dict[str, int]:
-    """강제 종료로 남은 claimed 와 unknown 을 조회로 정리한다. 조회로 부재가 확인된 경우에만 재시도 가능(failed)."""
+    """강제 종료로 남은 claimed 와 unknown 을 조회로 정리한다. 조회 미발견은 전송 중인 요청의 취소를 보장하지 않으므로 unknown을 유지한다."""
     now = _aware(now or now_utc())
     res = {"published": 0, "still_unknown": 0, "confirmed_absent": 0}
     with store.tx() as c:
         rows = c.execute("SELECT * FROM publications WHERE state IN ('claimed','unknown')").fetchall()
     for r in rows:
         if r["state"] == "claimed" and now - _aware(datetime.fromisoformat(r["claimed_at"])) < older_than:
+            continue
+        if r["adapter_kind"] != ("mock" if adapter.is_mock else "real"):
             continue
         try:
             found = adapter.lookup(r["idempotency_key"])
@@ -333,10 +349,10 @@ def recover_stale_claims(store: Store, adapter: ChannelAdapter, older_than: time
                 c.execute("UPDATE products SET status='published' WHERE id=?", (r["product_id"],))
                 res["published"] += 1
             else:
-                c.execute("UPDATE publications SET state='failed', updated_at=? WHERE id=?", (iso(now), r["id"]))
-                c.execute("INSERT INTO publish_attempts(publication_id,run_key,outcome,detail,created_at) VALUES(?,?,?,?,?)",
-                          (r["id"], None, "confirmed_absent", "조회로 미등록 확인", iso(now)))
-                res["confirmed_absent"] += 1
+                # A lookup miss cannot prove an in-flight remote create will not finish.
+                c.execute("UPDATE publications SET state='unknown', updated_at=? WHERE id=?",
+                          (iso(now), r["id"]))
+                res["still_unknown"] += 1
     return res
 
 

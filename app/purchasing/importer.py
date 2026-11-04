@@ -100,7 +100,7 @@ def validate_product(p: Any) -> dict:
     if not isinstance(comp, dict):
         raise ValidationError("compliance: 객체여야 합니다")
     flags = comp.get("restricted_flags") or []
-    if not isinstance(flags, list) or any(f not in ALLOWED_RESTRICTED_FLAGS for f in flags):
+    if not isinstance(flags, list) or any(not isinstance(f, str) or f not in ALLOWED_RESTRICTED_FLAGS for f in flags):
         raise ValidationError(f"restricted_flags: 허용값 {sorted(ALLOWED_RESTRICTED_FLAGS)}")
     if not isinstance(comp.get("sale_allowed_confirmed", False), bool):
         raise ValidationError("sale_allowed_confirmed: 불리언이어야 합니다")
@@ -159,11 +159,19 @@ def import_csv(raw: str) -> ImportReport:
         raise ValidationError(f"CSV 필수 열 누락: {sorted(missing)}")
     groups: dict[tuple, dict] = {}
     bad: list[dict] = []
+    signatures: dict[tuple, tuple] = {}
+    conflicts: set[tuple] = set()
     for i, row in enumerate(reader, start=2):
         if (row.get("schema_version") or "").strip() != str(SCHEMA_VERSION):
             bad.append({"index": i, "source_product_id": row.get("source_product_id"), "errors": ["schema_version 불일치"]})
             continue
         key = (row.get("source") or "taobao", row.get("source_product_id"))
+        metadata = tuple((row.get(k) or "").strip() for k in
+                         ("title_src", "category", "description_src", "supply_url", "images",
+                          "delivery_min", "delivery_max", "sale_allowed_confirmed", "restricted_flags"))
+        if key in signatures and signatures[key] != metadata:
+            conflicts.add(key)
+        signatures.setdefault(key, metadata)
         g = groups.setdefault(key, {"source": key[0], "source_product_id": key[1], "title_src": row.get("title_src"),
                                     "category": row.get("category"), "description_src": row.get("description_src"),
                                     "supply_url": row.get("supply_url"),
@@ -189,7 +197,9 @@ def import_csv(raw: str) -> ImportReport:
         if row.get("dims_cm"):
             opt["dims_cm"] = row["dims_cm"].split("x")
         g["options"].append(opt)
-    rep = _collect(list(groups.values()))
+    for key in conflicts:
+        bad.append({"source_product_id": key[1], "errors": ["CSV 상품 공통 정보 충돌"], "index": None})
+    rep = _collect([g for key, g in groups.items() if key not in conflicts])
     rep.rejected.extend(bad)
     return rep
 

@@ -19,6 +19,11 @@ def sample(i, **over):
          "compliance": {"sale_allowed_confirmed": True, "restricted_flags": []},
          "options": [{"source_option_id": "A", "name": "白色", "unit_price": "100", "weight_g": "300"},
                      {"source_option_id": "B", "name": "黑色", "unit_price": "120", "weight_g": "350"}]}
+    # Synthetic fixtures explicitly confirm these costs as zero, rather than leaving them unknown.
+    for option in p["options"]:
+        for key in ("china_shipping_krw", "handling_krw", "seller_customs_krw", "domestic_shipping_krw",
+                    "payment_fee_rate", "reserve_rate"):
+            option[key] = "0"
     p.update(over)
     return validate_product(p)
 
