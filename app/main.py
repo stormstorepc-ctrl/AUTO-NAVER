@@ -60,7 +60,9 @@ def admin(request: Request, db: Session = Depends(get_db)):
     return HTMLResponse(f'''<!doctype html><html><head><meta charset="utf-8"><title>STORMPC 관리자</title><style>body{{font-family:Arial;margin:0;background:#f5f7fb}}header{{background:#111827;color:#fff;padding:18px 28px;display:flex;justify-content:space-between}}main{{padding:24px}}.cards{{display:grid;grid-template-columns:repeat(5,1fr);gap:12px}}.card{{background:#fff;padding:18px;border-radius:14px}}table{{width:100%;border-collapse:collapse;background:#fff;margin-top:18px}}th,td{{padding:10px;border-bottom:1px solid #e5e7eb;text-align:left}}button{{padding:7px 10px;border:0;border-radius:6px;background:#111827;color:white}}</style></head><body><header><b>STORMPC AUTO COMMERCE v3</b><a href="/admin/logout" style="color:white">로그아웃</a></header><main><div class="cards"><div class="card"><b>전체</b><h2>{total}</h2></div><div class="card"><b>승인 대기</b><h2>{pending}</h2></div><div class="card"><b>승인 완료</b><h2>{approved}</h2></div><div class="card"><b>스토어 등록</b><h2>{listed}</h2></div><div class="card"><b>품절</b><h2>{soldout}</h2></div></div><h2>상품관리</h2><table><tr><th>ID</th><th>상품명</th><th>카테고리</th><th>공급가</th><th>판매가</th><th>재고</th><th>상태</th><th>승인</th><th>작업</th></tr>{rows}</table><h2>최근 작업로그</h2><table><tr><th>시간</th><th>작업</th><th>레벨</th><th>내용</th></tr>{logrows}</table></main></body></html>''')
 
 @app.get('/products')
-def products(db: Session = Depends(get_db)):
+def products(request: Request, db: Session = Depends(get_db)):
+    guard = require_admin(request)
+    if guard: return guard
     return db.scalars(select(Product).order_by(Product.id)).all()
 
 @app.post('/products/{product_id}/approve')
