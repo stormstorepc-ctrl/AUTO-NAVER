@@ -22,7 +22,9 @@ from .workflow import (approve, blockers_before_approval, exclude, EXPECTED_MARG
 from .store import now_utc
 from .pricing import D, ValidationError, FxRate, ShippingRateCard, ChannelTerms, SaleTerms
 from .importer import import_json, import_csv, validate_product
-from .review_ui import import_form, product_forms, sample_document, channel_nav, COST_LABELS
+from .review_ui import (import_form, product_forms, sample_document, channel_nav, COST_LABELS,
+                        url_import_form, url_import_reply_form)
+from .assist import product_request, parse_product_reply, parse_translation_reply
 from .cli import week_key
 
 CHANNELS = ("smartstore", "danggeun", "bunjang")
@@ -88,7 +90,7 @@ def create_app(store: Store, username: str, password: str, allow_hosts: tuple[st
                             f"label{{display:block;margin:12px 0}}input,textarea,select,button{{font:inherit;padding:8px;max-width:100%;box-sizing:border-box}}"
                             f"textarea{{display:block;width:100%}}button{{cursor:pointer;background:#234dbe;color:white;border:0;border-radius:6px;margin:6px 0}}"
                             f"nav{{margin:16px 0}}a{{color:#234dbe}}.notice{{padding:12px;background:#e8edff}}"
-                            f"</style><header><a href='/'>상품 목록</a> · <a href='/import'>상품 가져오기</a>"
+                            f"</style><header><a href='/'>상품 목록</a> · <a href='/import'>상품 가져오기</a> · <a href='/import/url'>주소로 상품 추가</a>"
                             f"<p class=notice>구매대행 시연 · 실제 판매 채널 등록 없이 모의 흐름을 확인합니다.</p></header>{body}",
                             headers={"Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'",
                                      "X-Frame-Options": "DENY", "Cache-Control": "no-store"})
@@ -193,6 +195,45 @@ def create_app(store: Store, username: str, password: str, allow_hosts: tuple[st
             raise ValidationError("상품명(500자), 설명(20,000자), 모든 옵션명(300자)을 입력하세요.")
         store.add_translation(pid, title, description, names, expected_version=version(form))
         return done("번역 초안을 저장했습니다. 원문과 대조한 뒤 검수 완료를 눌러주세요.", pid, channel)
+
+    @app.get("/import/url", response_class=HTMLResponse)
+    def url_import_screen(request: Request):
+        guard(request, False)
+        return page(url_import_form())
+
+    @app.post("/import/url")
+    async def url_import_request(request: Request):
+        guard(request, True)
+        form = await fields(request)
+        url = form.get("url", "")
+        return page(url_import_reply_form(url, product_request(url, form.get("page_text", ""))))
+
+    @app.post("/import/url/save")
+    async def url_import_save(request: Request):
+        actor = guard(request, True)
+        form = await fields(request)
+        item = parse_product_reply(form.get("url", ""), form.get("reply", ""), form.get("sale_allowed") == "yes")
+        counts = store.upsert_products([item], actor)
+        with store.tx() as c:
+            pid = c.execute("SELECT id FROM products WHERE source=? AND source_product_id=?",
+                            (item["source"], item["source_product_id"])).fetchone()[0]
+        state = "새로 추가" if counts["added"] else "정보 변경" if counts["updated"] else "변경 없음"
+        options = "".join(f"<li>{E(o['name'])} · {E(o['unit_price'])}위안"
+                          f"{' · ' + E(o['weight_g']) + 'g' if o.get('weight_g') else ' · 무게 미확인'}</li>" for o in item["options"])
+        warn = "" if item["compliance"]["sale_allowed_confirmed"] else \
+            "<p>판매 가능 여부를 확인하지 않아 승인 단계에서 막힙니다. 확인 후 다시 저장하세요.</p>"
+        return page(f"<h1>상품 저장: {state}</h1><p>{E(item['title_src'])}</p><ul>{options}</ul>{warn}"
+                    f"<p>가격과 옵션이 페이지와 맞는지 꼭 확인하세요.</p>"
+                    f"<a href='/product/{pid}'>상품 화면에서 가격 계산·번역 계속</a>")
+
+    @app.post("/product/{pid}/translation/assist")
+    async def translation_assist_save(pid: int, request: Request):
+        guard(request, True)
+        form = await fields(request)
+        channel = channel_value(form)
+        title, description, names = parse_translation_reply(product(pid), form.get("reply", ""))
+        store.add_translation(pid, title, description, names, expected_version=version(form))
+        return done("Claude 번역을 초안으로 저장했습니다. 원문과 대조한 뒤 검수 완료를 눌러주세요.", pid, channel)
 
     @app.post("/product/{pid}/translation/review")
     async def review_translation(pid: int, request: Request):

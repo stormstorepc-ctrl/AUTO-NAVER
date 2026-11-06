@@ -1,6 +1,8 @@
 """서버에서 렌더링하는 구매대행 시연 화면. 외부 HTML/스크립트는 실행하지 않는다."""
 from html import escape as E
 
+from .assist import translation_request
+
 COST_LABELS = {
     "china_shipping_krw": "중국 내 배송비(원)", "handling_krw": "검수·포장비(원)",
     "seller_customs_krw": "판매자 부담 통관비(원)", "domestic_shipping_krw": "국내 배송비(원)",
@@ -21,7 +23,8 @@ def channel_nav(channel):
 
 def import_form():
     return """<h1>상품 가져오기</h1>
-<p>JSON 또는 CSV 파일을 선택하세요. 실제 타오바오 수집 기능은 아직 연결되지 않았습니다.</p>
+<p class=notice>실제 타오바오 상품은 <a href='/import/url'>주소로 상품 추가</a>를 이용하세요.</p>
+<p>JSON 또는 CSV 파일을 선택하세요.</p>
 <p>처음 사용한다면 <a href='/sample.json' download>가상 상품 샘플 다운로드</a> 후 아래에서 선택하세요.
 샘플의 상품·이미지·비용은 모두 시연용입니다.</p>
 <form method=post action='/import' enctype='multipart/form-data'>
@@ -29,6 +32,44 @@ def import_form():
 <label>파일(최대 2MB) <input type=file name=file accept='.json,.csv'></label>
 <label>또는 내용을 붙여넣기 <textarea name=raw rows=8></textarea></label>
 <button>상품 가져오기</button></form>"""
+
+
+def url_import_form():
+    return """<h1>주소로 상품 추가</h1>
+<section><h2>1. 상품 페이지 내용 복사</h2>
+<ol><li>Chrome에서 타오바오 상품 페이지를 엽니다.</li>
+<li>주소창의 주소를 복사해서 아래 <b>상품 주소</b>에 붙여넣습니다.</li>
+<li>상품 페이지 아무 곳이나 클릭한 뒤 <b>Ctrl+A</b>, <b>Ctrl+C</b>를 누르고 아래 <b>페이지 내용</b>에 붙여넣습니다.</li></ol>
+<p>이 프로그램은 타오바오에 직접 접속하지 않습니다. 화면에 보이는 글만 사용합니다.</p>
+<form method=post action='/import/url'>
+<label>상품 주소 <input name=url required placeholder='https://item.taobao.com/item.htm?id=...' style='width:100%'></label>
+<label>페이지 내용 <textarea name=page_text rows=10 required></textarea></label>
+<button>다음: Claude 요청 문구 만들기</button></form></section>"""
+
+
+def url_import_reply_form(url, request_text):
+    return (f"<h1>주소로 상품 추가</h1><section><h2>2. Claude에게 정보 정리 맡기기</h2>"
+            "<ol><li>아래 요청 문구 칸을 클릭하고 <b>Ctrl+A</b>, <b>Ctrl+C</b>로 복사합니다.</li>"
+            "<li>Claude 채팅(claude.ai)에 붙여넣고 보냅니다.</li>"
+            "<li>Claude 답변을 복사해서 아래 <b>Claude 답변</b> 칸에 붙여넣습니다.</li></ol>"
+            f"<label>요청 문구 <textarea rows=10 readonly>{E(request_text)}</textarea></label></section>"
+            "<section><h2>3. 답변 붙여넣고 저장</h2>"
+            f"<form method=post action='/import/url/save'><input type=hidden name=url value='{E(url, quote=True)}'>"
+            "<label>Claude 답변 <textarea name=reply rows=10 required></textarea></label>"
+            "<label><input type=checkbox name=sale_allowed value=yes> 한국에서 판매해도 되는 상품인지 확인했습니다 "
+            "(체크하지 않으면 저장은 되지만 승인 단계에서 막힙니다)</label>"
+            "<button>상품 저장</button></form></section>")
+
+
+def translation_assist(p, request_text, hidden):
+    return (f"<section><h2>Claude로 번역하기 (무료)</h2>"
+            "<ol><li>아래 요청 문구 칸을 클릭하고 <b>Ctrl+A</b>, <b>Ctrl+C</b>로 복사합니다.</li>"
+            "<li>Claude 채팅(claude.ai)에 붙여넣고 보냅니다.</li>"
+            "<li>Claude 답변을 복사해서 아래 칸에 붙여넣고 저장합니다. 그다음 번역을 원문과 대조하고 검수 완료를 누르세요.</li></ol>"
+            f"<label>요청 문구 <textarea rows=8 readonly>{E(request_text)}</textarea></label>"
+            f"<form method=post action='/product/{p['id']}/translation/assist'>{hidden}"
+            "<label>Claude 답변 <textarea name=reply rows=6 required></textarea></label>"
+            "<button>답변으로 번역 초안 저장</button></form></section>")
 
 
 def product_forms(p, tr, quotes, channel):
@@ -40,7 +81,8 @@ def product_forms(p, tr, quotes, channel):
         f"<p>원문 옵션 {E(o['source_option_id'])}: {E(o['name'])}</p>" +
         input_field(f"option_{i}", "한국어 옵션명", translated.get(o["source_option_id"], ""))
         for i, o in enumerate(p["options"]))
-    translation = (f"<section><h2>2. 한국어 상세페이지 입력</h2><p>번역문을 입력해 원문과 대조하세요. 자동 번역 엔진은 연결 전입니다.</p>"
+    translation = translation_assist(p, translation_request(p), hidden) + (
+                   f"<section><h2>2. 한국어 상세페이지 입력</h2><p>번역문을 직접 입력하거나 위에서 Claude 답변으로 채운 뒤 원문과 대조하세요.</p>"
                    f"<form method=post action='/product/{pid}/translation'>{hidden}"
                    + input_field("title_ko", "한국어 상품명", tr["title_ko"] if tr else "") +
                    f"<label>한국어 상세 설명 <textarea name=description_ko rows=6 required>{E(tr['description_ko']) if tr else ''}</textarea></label>"
