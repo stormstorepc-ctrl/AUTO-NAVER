@@ -14,7 +14,7 @@ EXT = {"Origin": "chrome-extension://abcdefghijklmnop", "Content-Type": "applica
 
 def payload(**over):
     p = {"schema": 1, "status": "ok", "url": "https://detail.tmall.com/item.htm?id=1055677150014&skuId=5",
-         "title": "合成测试 沥水架", "price_texts": ["¥39.90", "¥59.00"], "selected_options": ["白色 50cm"],
+         "title": "合成测试 沥水架", "price_texts": ["¥39.90", "原价 ¥59.00"], "selected_options": ["白色 50cm"],
          "images": ["https://img.example.invalid/main1.jpg", "//img.example.invalid/main2.jpg", "data:image/png;base64,xx"],
          "detail_images": ["https://img.example.invalid/d1.jpg", "https://img.example.invalid/main1.jpg"],
          "notes": ["note"], "captured_at": "2026-11-08T00:00:00Z"}
@@ -49,6 +49,23 @@ def test_validate_capture_rejects(over, msg):
 ])
 def test_first_price_only_suggests_clear_amounts(text, expected):
     assert first_price([text]) == expected
+
+
+# Cases from ChatGPT report (PR #9 comments 6711743236, 6711787489).
+@pytest.mark.parametrize("texts, expected", [
+    (["原价¥99.00", "到手价¥39.90"], "39.90"), (["原价¥99.00 到手价¥39.90"], "39.90"),
+    (["¥12.50 至 ¥30.00"], ""), (["¥39.999"], ""), (["¥39.90", "¥59.00"], ""),  # two unmarked prices: unclear
+    (["¥39.90", "原价 ¥59.00"], "39.90"), (["券后¥35", "到手价¥39.90"], ""), (["¥39.90", "¥39.90"], "39.90"),
+    (["¥39.90", "¥1,2345"], ""), (["12.5 到 30"], ""),
+])
+def test_first_price_context_ranges_and_precision(texts, expected):
+    assert first_price(texts) == expected
+
+
+def test_other_images_have_their_own_limit():
+    many = [f"https://img.example.invalid/rec{i}.jpg" for i in range(40)]
+    d = validate_capture(payload(images=[f"https://img.example.invalid/m{i}.jpg" for i in range(50)], other_images=many))
+    assert len(d["images"]) == 50 and len(d["other_images"]) == 20
 
 
 def test_first_price_skips_unclear_and_uses_next():

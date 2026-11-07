@@ -88,7 +88,7 @@ def test_extract_reads_title_price_selected_options_and_images(browser):
     r = extract(browser)
     assert r["status"] == "ok" and r["schema"] == 1 and r["url"] == PRODUCT_URL
     assert r["title"] == "合成测试 沥水架 可伸缩"
-    assert r["price_texts"] == ["¥39.90", "¥59.00"]
+    assert r["price_texts"] == ["¥39.90", "原价 ¥59.00"]  # the origin-price element is marked
     assert r["selected_options"] == ["白色 50cm", "加厚款"]  # the "unselected" item is not taken
     # The price split into "¥" / "39" / ".90" spans is read whole; the monthly sales count is not a price.
     assert r["price_texts"][0] == "¥39.90"
@@ -96,7 +96,8 @@ def test_extract_reads_title_price_selected_options_and_images(browser):
     assert r["images"] == ["https://img.example.invalid/main1.jpg", "https://img.example.invalid/main2_800.jpg",
                            "https://img.example.invalid/main3.jpg"]
     assert r["detail_images"] == ["https://img.example.invalid/d1.jpg", "https://img.example.invalid/d2_lazy.jpg"]
-    assert r["other_images"] == ["https://img.example.invalid/rec1.jpg"]
+    # 110 recommendation images (55 before the gallery) are capped at 20 and do not push out product images.
+    assert len(r["other_images"]) == 20 and r["other_images"][0] == "https://img.example.invalid/rec_top0.jpg"
     assert any("아직 화면에 안 나온 이미지 2개" in n for n in r["notes"])
 
 

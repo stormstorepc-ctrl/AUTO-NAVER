@@ -34,7 +34,9 @@
   const seenPrice = new Set();
   for (const el of priceEls) {
     if (priceEls.some((o) => o !== el && el.contains(o))) continue; // a smaller complete price is inside
-    const t = textOf(el);
+    let t = textOf(el);
+    // A struck-through or "origin" price is marked so the local app does not suggest it as the purchase price.
+    if (el.closest('del,s,[class*="origin" i],[class*="original" i],[class*="lineThrough" i]') && !/原价|划线价/.test(t)) t = "原价 " + t;
     if (!seenPrice.has(t)) { seenPrice.add(t); out.price_texts.push(t); }
     if (out.price_texts.length >= 20) break;
   }
@@ -79,10 +81,11 @@
     if (!url || seenImg.has(url)) continue;
     seenImg.add(url);
     const inRecommend = img.closest(RECOMMEND);
-    if (!inRecommend && img.closest(DESC)) out.detail_images.push(url);
-    else if (!inRecommend && img.closest(GALLERY)) out.images.push(url);
-    else out.other_images.push(url);
-    if (out.images.length + out.detail_images.length + out.other_images.length >= 50) break;
+    // Product images have their own limit, so a long recommendation list cannot crowd them out.
+    const productCount = out.images.length + out.detail_images.length;
+    if (!inRecommend && img.closest(DESC)) { if (productCount < 50) out.detail_images.push(url); }
+    else if (!inRecommend && img.closest(GALLERY)) { if (productCount < 50) out.images.push(url); }
+    else if (out.other_images.length < 20) out.other_images.push(url);
   }
   if (!hasGallery) out.notes.push("대표 이미지 영역을 찾지 못했습니다. 이미지는 '기타'로 표시되니 검토 화면에서 직접 고르세요.");
   if (pending) out.notes.push("아직 화면에 안 나온 이미지 " + pending + "개가 있습니다. 페이지 끝까지 내린 뒤 다시 가져오면 더 정확합니다.");

@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import re
-from decimal import Decimal, InvalidOperation
+from decimal import Decimal
 
 from .assist import _delivery_days, _image_list, taobao_item
 from .importer import validate_product
@@ -72,37 +72,54 @@ def validate_capture(payload) -> dict:
         "price_texts": _text_list(payload.get("price_texts"), "price_texts", 80, 20),
         "selected_options": _text_list(payload.get("selected_options"), "selected_options", 120, 10),
         "images": images, "detail_images": detail[:max(0, 50 - len(images))],
-        "other_images": other[:max(0, 50 - len(images) - len(detail))],
+        "other_images": other[:20],  # separate limit: never takes room from product images
         "notes": _text_list(payload.get("notes"), "notes", 200, 10),
         "captured_at": _short_text(payload.get("captured_at"), "captured_at", 40),
     }
 
 
-_CURRENCY_AMOUNT = re.compile(r"[¥￥]\s*(\d{1,3}(?:,\d{3})+(?:\.\d{1,2})?|\d+(?:\.\d{1,2})?)|"
-                              r"(\d{1,3}(?:,\d{3})+(?:\.\d{1,2})?|\d+(?:\.\d{1,2})?)\s*元")
-_BARE_AMOUNT = re.compile(r"^\s*(\d{1,3}(?:,\d{3})+(?:\.\d{1,2})?|\d+(?:\.\d{1,2})?)\s*$")
-_RANGE = re.compile(r"\d\s*[-~～—]\s*[¥￥]?\s*\d")
+_MONEY = re.compile(r"[¥￥]\s*([\d,]+(?:\.\d+)?)|([\d,]+(?:\.\d+)?)\s*元")
+_BARE = re.compile(r"^\s*([\d,]+(?:\.\d+)?)\s*$")
+_VALID = re.compile(r"^(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d{1,2})?$")
+_RANGE = re.compile(r"\d\s*(?:[-~～—]|至|到(?!手))\s*[¥￥]?\s*\d")
+_ORIGINAL = re.compile(r"原价|划线价|吊牌价|市场价|参考价|专柜价")
+_FINAL = re.compile(r"到手价?|券后价?|折后价?|促销价|优惠价|活动价|现价|售价|抢购价")
 
 
 def first_price(price_texts: list[str]) -> str:
-    """A suggested purchase price, or "" when it is not clear enough to prefill.
+    """A suggested purchase price, or "" when the page does not make it clear.
 
-    Only an amount marked as money (¥/￥ before it, or 元 after it) or a text that is only a number counts.
-    Sales counts, coupon thresholds without a currency mark, and price ranges are not suggested.
+    Only money-marked amounts (¥/￥ before, 元 after) or a text that is just a number count.
+    Original/strike-through prices (原价 …) are ignored; a price marked as the final price (到手价, 券后 …)
+    wins. Any range (12.5-30, ¥12.50 至 ¥30.00), any malformed amount (¥39.999), or two different
+    unmarked prices leave the field blank for the reviewer. The smallest number is never picked blindly.
     """
+    final, plain = set(), set()
     for t in price_texts:
         t = t.replace("，", ",").replace("．", ".")
         if _RANGE.search(t):
-            continue
-        m = _CURRENCY_AMOUNT.search(t) or _BARE_AMOUNT.match(t)
-        if not m:
-            continue
-        amount = next(g for g in m.groups() if g)
-        try:
-            return str(Decimal(amount.replace(",", "")))
-        except InvalidOperation:
-            continue
-    return ""
+            return ""
+        last = 0
+        found = False
+        for m in _MONEY.finditer(t):
+            found = True
+            amount = m.group(1) or m.group(2)
+            if not _VALID.match(amount) or (m.end() < len(t) and t[m.end()].isdigit()):
+                return ""
+            label = t[last:m.start()]
+            last = m.end()
+            value = Decimal(amount.replace(",", ""))
+            if _ORIGINAL.search(label):
+                continue
+            (final if _FINAL.search(label) else plain).add(value)
+        if not found:
+            m = _BARE.match(t)
+            if m:
+                if not _VALID.match(m.group(1)):
+                    return ""
+                plain.add(Decimal(m.group(1).replace(",", "")))
+    chosen = final if final else plain
+    return str(next(iter(chosen))) if len(chosen) == 1 else ""
 
 
 def option_id(name: str) -> str:
