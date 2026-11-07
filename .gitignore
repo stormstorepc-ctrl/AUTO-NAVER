@@ -1,8 +1,10 @@
 .env
 .venv/
+.venv.backup-*/
 __pycache__/
 *.pyc
 *.db
 artifacts/
 .naver_cafe_token.json
 .naver_cafe_state
+.purchasing_server.json
