@@ -41,10 +41,42 @@ def test_validate_capture_rejects(over, msg):
     assert msg in str(e.value)
 
 
-def test_first_price_handles_ranges_and_missing():
-    assert first_price(["券后 ¥12.5-30"]) == "12.5"
-    assert first_price(["月销 1000+"]) == "1000"  # only a suggestion; reviewer confirms
+# Cases from ChatGPT report (PR #9 comment 6711128206).
+@pytest.mark.parametrize("text, expected", [
+    ("¥1,299.00", "1299.00"), ("满200减30，到手价¥39.90", "39.90"), ("月销 1000+", ""), ("已选50cm，¥39.90", "39.90"),
+    ("¥1299.00", "1299.00"), ("¥39.90", "39.90"), ("39.90", "39.90"), ("39.90元", "39.90"),
+    ("券后 ¥12.5-30", ""), ("¥12.5~¥30", ""), ("39", "39"), ("已售 2万+", ""),
+])
+def test_first_price_only_suggests_clear_amounts(text, expected):
+    assert first_price([text]) == expected
+
+
+def test_first_price_skips_unclear_and_uses_next():
+    assert first_price(["月销 1000+", "¥39.90"]) == "39.90"
     assert first_price([]) == ""
+
+
+def test_recapture_keeps_weight_and_costs():
+    cap = {"item_id": "1055677150014", "url": "https://detail.tmall.com/item.htm?id=1055677150014",
+           "data": validate_capture(payload(price_texts=["¥39.90"], selected_options=["白色"]))}
+    first = product_from_capture(cap, None, {"option_name": "白色", "unit_price": "39.90", "weight_g": "500",
+                                             "delivery_min": "7", "delivery_max": "14"})
+    costs = ("china_shipping_krw", "handling_krw", "seller_customs_krw", "domestic_shipping_krw", "payment_fee_rate", "reserve_rate")
+    for key in costs:
+        first["options"][0][key] = "0"
+    again = product_from_capture(cap, first, {"option_name": "白色", "unit_price": "41", "weight_g": ""})
+    o = again["options"][0]
+    assert o["weight_g"] == "500" and o["unit_price"] == "41" and all(k in o for k in costs) and len(again["options"]) == 1
+    heavier = product_from_capture(cap, again, {"option_name": "白色", "unit_price": "41", "weight_g": "650"})
+    assert heavier["options"][0]["weight_g"] == "650"
+
+
+def test_other_images_are_kept_apart_and_selectable():
+    d = validate_capture(payload(other_images=["https://img.example.invalid/rec.jpg", "https://img.example.invalid/main1.jpg"]))
+    assert d["other_images"] == ["https://img.example.invalid/rec.jpg"]
+    cap = {"item_id": d["item_id"], "url": d["url"], "data": d}
+    p = product_from_capture(cap, None, {"option_name": "a", "unit_price": "1", "images": ["https://img.example.invalid/rec.jpg"]})
+    assert p["images"] == ["https://img.example.invalid/rec.jpg"]
 
 
 def test_merge_keeps_other_options_and_images():

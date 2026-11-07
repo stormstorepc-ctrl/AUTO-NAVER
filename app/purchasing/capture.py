@@ -17,7 +17,6 @@ from .pricing import ValidationError
 
 MAX_CAPTURE_BYTES = 512 * 1024
 CAPTURE_STATUSES = {"ok", "login_required", "captcha", "no_product"}
-_PRICE = re.compile(r"(\d{1,7}(?:[.,]\d{1,2})?)")
 
 
 def _short_text(v, name: str, maxlen: int) -> str:
@@ -62,30 +61,47 @@ def validate_capture(payload) -> dict:
     title = _short_text(payload.get("title"), "title", 500)
     if not title:
         raise ValidationError("상품 제목을 찾지 못했습니다. 페이지가 다 열린 뒤 다시 누르세요.")
-    for key in ("images", "detail_images"):
+    for key in ("images", "detail_images", "other_images"):
         if not isinstance(payload.get(key) or [], list):
             raise ValidationError(f"{key}: 목록이어야 합니다")
     images = _https_only(_image_list(payload.get("images") or []))
     detail = [u for u in _https_only(_image_list(payload.get("detail_images") or [])) if u not in images]
+    other = [u for u in _https_only(_image_list(payload.get("other_images") or [])) if u not in images and u not in detail]
     return {
         "item_id": item_id, "url": clean_url, "title": title,
         "price_texts": _text_list(payload.get("price_texts"), "price_texts", 80, 20),
         "selected_options": _text_list(payload.get("selected_options"), "selected_options", 120, 10),
-        "images": images, "detail_images": detail[:50 - len(images)] if len(images) < 50 else [],
+        "images": images, "detail_images": detail[:max(0, 50 - len(images))],
+        "other_images": other[:max(0, 50 - len(images) - len(detail))],
         "notes": _text_list(payload.get("notes"), "notes", 200, 10),
         "captured_at": _short_text(payload.get("captured_at"), "captured_at", 40),
     }
 
 
+_CURRENCY_AMOUNT = re.compile(r"[¥￥]\s*(\d{1,3}(?:,\d{3})+(?:\.\d{1,2})?|\d+(?:\.\d{1,2})?)|"
+                              r"(\d{1,3}(?:,\d{3})+(?:\.\d{1,2})?|\d+(?:\.\d{1,2})?)\s*元")
+_BARE_AMOUNT = re.compile(r"^\s*(\d{1,3}(?:,\d{3})+(?:\.\d{1,2})?|\d+(?:\.\d{1,2})?)\s*$")
+_RANGE = re.compile(r"\d\s*[-~～—]\s*[¥￥]?\s*\d")
+
+
 def first_price(price_texts: list[str]) -> str:
-    """First number in the shown price texts, as a suggestion only (the reviewer confirms it)."""
+    """A suggested purchase price, or "" when it is not clear enough to prefill.
+
+    Only an amount marked as money (¥/￥ before it, or 元 after it) or a text that is only a number counts.
+    Sales counts, coupon thresholds without a currency mark, and price ranges are not suggested.
+    """
     for t in price_texts:
-        m = _PRICE.search(t.replace("，", ","))
-        if m:
-            try:
-                return str(Decimal(m.group(1).replace(",", ".")))
-            except InvalidOperation:
-                continue
+        t = t.replace("，", ",").replace("．", ".")
+        if _RANGE.search(t):
+            continue
+        m = _CURRENCY_AMOUNT.search(t) or _BARE_AMOUNT.match(t)
+        if not m:
+            continue
+        amount = next(g for g in m.groups() if g)
+        try:
+            return str(Decimal(amount.replace(",", "")))
+        except InvalidOperation:
+            continue
     return ""
 
 
@@ -100,14 +116,21 @@ def product_from_capture(capture: dict, existing: dict | None, form: dict) -> di
     price = (form.get("unit_price") or "").strip()
     if not price:
         raise ValidationError("이 옵션의 가격(위안)을 확인해서 넣어주세요.")
-    chosen = [u for u in form.get("images", []) if u in data["images"] + data["detail_images"]]
+    chosen = [u for u in form.get("images", [])
+              if u in data["images"] + data["detail_images"] + data.get("other_images", [])]
     extra = _image_list(form.get("image_urls", ""))
-    new_option = {"source_option_id": option_id(option_name), "name": option_name, "unit_price": price,
-                  "currency": "CNY", "quantity": 1}
+    oid = option_id(option_name)
+    old_options = (existing or {}).get("options", [])
+    previous = next((o for o in old_options if o["source_option_id"] == oid), None)
+    # Re-capturing an option updates what was captured (name, price) and keeps everything else that was
+    # entered before (weight, size, cost fields). Only a newly typed weight replaces the old one.
+    new_option = {**(previous or {}), "source_option_id": oid, "name": option_name, "unit_price": price,
+                  "currency": "CNY", "quantity": (previous or {}).get("quantity", 1)}
     if (form.get("weight_g") or "").strip():
         new_option["weight_g"] = form["weight_g"].strip()
-    options = [o for o in (existing or {}).get("options", []) if o["source_option_id"] != new_option["source_option_id"]]
-    options.append(new_option)
+    options = [new_option if o["source_option_id"] == oid else o for o in old_options]
+    if previous is None:
+        options.append(new_option)
     images = list((existing or {}).get("images", []))
     for u in chosen + extra:
         if u not in images:

@@ -65,7 +65,7 @@ $("capture").addEventListener("click", async () => {
     "가져왔습니다: " + data.title.slice(0, 40),
     "선택 옵션: " + (data.selected_options.join(" / ") || "없음"),
     "가격 표시: " + (body.price_found ? "찾음" : "못 찾음 (검토 화면에서 입력)"),
-    "이미지: " + body.images + "개",
+    "이미지: " + body.images + "개" + (body.other_images ? " (기타 " + body.other_images + "개는 검토 화면에서 선택)" : ""),
   ].concat(data.notes || []);
   show(lines.join("\n"), "ok");
   $("open").hidden = false;

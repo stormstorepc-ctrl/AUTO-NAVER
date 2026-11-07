@@ -84,7 +84,7 @@ def create_app(store: Store, username: str, password: str, allow_hosts: tuple[st
 
     def page(body: str) -> HTMLResponse:
         return HTMLResponse(f"<!doctype html><meta charset=utf-8><title>구매대행 검토</title>"
-                            f"<meta name=viewport content='width=device-width,initial-scale=1'><meta name=referrer content=no-referrer>"
+                            f"<meta name=viewport content='width=device-width,initial-scale=1'>"
                             f"<style>body{{font:15px sans-serif;margin:24px auto;max-width:1100px;padding:0 16px;background:#f7f8fc;color:#17223b}}"
                             f"td,th{{border:1px solid #ccd;padding:8px}}table{{border-collapse:collapse;width:100%;overflow-wrap:anywhere}}"
                             f"section,fieldset{{background:white;padding:16px;margin:16px 0;border:1px solid #ccd;border-radius:10px}}"
@@ -269,6 +269,7 @@ def create_app(store: Store, username: str, password: str, allow_hosts: tuple[st
         port = request.url.port or 8765
         return JSONResponse({"ok": True, "capture_id": cid, "review_url": f"http://127.0.0.1:{port}/capture/{cid}",
                              "images": len(data["images"]) + len(data["detail_images"]),
+                             "other_images": len(data["other_images"]),
                              "price_found": bool(first_price(data["price_texts"]))})
 
     @app.get("/capture", response_class=HTMLResponse)
@@ -322,9 +323,10 @@ def create_app(store: Store, username: str, password: str, allow_hosts: tuple[st
         def figure(u, checked):
             return (f"<label style='display:inline-block;width:160px;vertical-align:top'>"
                     f"<input type=checkbox name=images value='{E(u, quote=True)}' {'checked' if checked else ''}> "
-                    f"<img src='{E(u, quote=True)}' alt='' style='width:150px;height:150px;object-fit:contain;background:#eee'></label>")
+                    f"<img src='{E(u, quote=True)}' referrerpolicy=no-referrer alt='' style='width:150px;height:150px;object-fit:contain;background:#eee'></label>")
         main = "".join(figure(u, True) for u in d["images"]) or "<p>대표 이미지를 찾지 못했습니다.</p>"
         detail = "".join(figure(u, True) for u in d["detail_images"]) or "<p>상세 이미지를 찾지 못했습니다.</p>"
+        other = "".join(figure(u, False) for u in d.get("other_images", []))
         notes = "".join(f"<li>{E(n)}</li>" for n in d["notes"])
         prices = " / ".join(E(t) for t in d["price_texts"]) or "가격 표시를 찾지 못했습니다"
         have = ("" if not existing else
@@ -344,6 +346,7 @@ def create_app(store: Store, username: str, password: str, allow_hosts: tuple[st
             "<label>무게(g, 모르면 비움) <input name=weight_g inputmode=decimal></label></section>"
             "<section><h2>2. 이미지</h2><p>쓸 이미지만 체크된 상태로 두세요.</p>"
             f"<h3>대표 이미지</h3>{main}<h3>상세 이미지</h3>{detail}"
+            + (f"<h3>기타 이미지 (추천 상품 사진일 수 있어 기본 해제)</h3>{other}" if other else "") +
             "<label>이미지 주소 직접 추가(한 줄에 하나) <textarea name=image_urls rows=2></textarea></label></section>"
             "<section><h2>3. 배송과 판매 확인</h2>"
             f"<label>예상 배송 기간 최소(일) <input name=delivery_min value='{days.get('min', '')}' inputmode=numeric></label>"
