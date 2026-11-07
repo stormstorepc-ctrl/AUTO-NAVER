@@ -43,6 +43,10 @@ CREATE TABLE IF NOT EXISTS runs(
   run_key TEXT PRIMARY KEY, status TEXT NOT NULL, summary TEXT, started_at TEXT NOT NULL, finished_at TEXT);
 CREATE TABLE IF NOT EXISTS mock_remote(
   idempotency_key TEXT PRIMARY KEY, remote_id TEXT NOT NULL, payload_hash TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY, value TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS captures(
+  id INTEGER PRIMARY KEY, item_id TEXT NOT NULL, url TEXT NOT NULL, data TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'new', created_at TEXT NOT NULL, product_id INTEGER);
 CREATE TABLE IF NOT EXISTS audit(
   id INTEGER PRIMARY KEY, at TEXT NOT NULL, actor TEXT, event TEXT NOT NULL, detail TEXT);
 """
@@ -152,6 +156,51 @@ class Store:
     def list_product_ids(self) -> list[int]:
         with self.tx() as c:
             return [r[0] for r in c.execute("SELECT id FROM products ORDER BY id")]
+
+    # ---- Chrome 확장 수집 ----
+    def capture_token(self, rotate: bool = False) -> str:
+        """Pairing code shared with the Chrome extension. Stored locally; never logged (audit redacts 'token')."""
+        import secrets
+        with self.tx() as c:
+            row = c.execute("SELECT value FROM settings WHERE key='capture_token'").fetchone()
+            if row and not rotate:
+                return row[0]
+            token = secrets.token_urlsafe(24)
+            c.execute("INSERT INTO settings(key,value) VALUES('capture_token',?) "
+                      "ON CONFLICT(key) DO UPDATE SET value=excluded.value", (token,))
+            self.audit(c, "local", "capture_token_rotated", {"rotated": True})
+            return token
+
+    def add_capture(self, item_id: str, url: str, data: dict) -> int:
+        with self.tx() as c:
+            cur = c.execute("INSERT INTO captures(item_id,url,data,created_at) VALUES(?,?,?,?)",
+                            (item_id, url, canonical(data), iso(now_utc())))
+            return cur.lastrowid
+
+    def get_capture(self, capture_id: int) -> dict | None:
+        with self.tx() as c:
+            r = c.execute("SELECT * FROM captures WHERE id=?", (capture_id,)).fetchone()
+        if not r:
+            return None
+        d = dict(r)
+        d["data"] = json.loads(d["data"])
+        return d
+
+    def list_captures(self, limit: int = 50) -> list[dict]:
+        with self.tx() as c:
+            rows = c.execute("SELECT id,item_id,status,created_at,product_id,data FROM captures ORDER BY id DESC LIMIT ?",
+                             (limit,)).fetchall()
+        return [{**dict(r), "data": json.loads(r["data"])} for r in rows]
+
+    def mark_capture_saved(self, capture_id: int, product_id: int) -> None:
+        with self.tx() as c:
+            c.execute("UPDATE captures SET status='saved', product_id=? WHERE id=?", (product_id, capture_id))
+
+    def find_product(self, source: str, source_product_id: str) -> dict | None:
+        with self.tx() as c:
+            r = c.execute("SELECT id FROM products WHERE source=? AND source_product_id=?",
+                          (source, source_product_id)).fetchone()
+            return self.get_product(c, r[0]) if r else None
 
     # ---- 번역 ----
     def add_translation(self, product_id: int, title_ko: str, description_ko: str, option_names: dict[str, str],

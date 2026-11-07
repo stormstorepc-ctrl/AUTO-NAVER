@@ -1,0 +1,21 @@
+<!doctype html>
+<meta charset="utf-8">
+<style>
+  body { font: 14px sans-serif; width: 300px; margin: 12px; color: #17223b; }
+  button { font: inherit; padding: 8px 12px; border: 0; border-radius: 6px; background: #234dbe; color: #fff; cursor: pointer; width: 100%; }
+  button.secondary { background: #e8edff; color: #234dbe; }
+  input { font: inherit; width: 100%; box-sizing: border-box; padding: 6px; }
+  #status { margin: 10px 0; white-space: pre-line; }
+  .err { color: #b00020; } .ok { color: #126b2f; }
+  details { margin-top: 12px; }
+</style>
+<button id="capture">이 상품 가져오기</button>
+<div id="status"></div>
+<button id="open" class="secondary" hidden>검토 화면 열기</button>
+<details id="setup">
+  <summary>연결 코드 설정</summary>
+  <p>검토 프로그램의 'Chrome 확장으로 가져오기' 화면에 있는 연결 코드를 붙여넣으세요.</p>
+  <input id="token" type="password" autocomplete="off">
+  <button id="save" class="secondary">저장</button>
+</details>
+<script src="popup.js"></script>

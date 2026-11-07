@@ -14,7 +14,7 @@ from decimal import Decimal
 from urllib.parse import parse_qs, urlparse
 
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import HTMLResponse, Response
+from fastapi.responses import HTMLResponse, JSONResponse, Response
 
 from .store import Store
 from .workflow import (approve, blockers_before_approval, exclude, EXPECTED_MARGIN, price_product,
@@ -25,6 +25,7 @@ from .importer import import_json, import_csv, validate_product
 from .review_ui import (import_form, product_forms, sample_document, channel_nav, COST_LABELS,
                         url_import_form, url_import_reply_form)
 from .assist import product_request, parse_product_reply, parse_translation_reply
+from .capture import MAX_CAPTURE_BYTES, first_price, product_from_capture, validate_capture
 from .cli import week_key
 
 CHANNELS = ("smartstore", "danggeun", "bunjang")
@@ -83,16 +84,16 @@ def create_app(store: Store, username: str, password: str, allow_hosts: tuple[st
 
     def page(body: str) -> HTMLResponse:
         return HTMLResponse(f"<!doctype html><meta charset=utf-8><title>구매대행 검토</title>"
-                            f"<meta name=viewport content='width=device-width,initial-scale=1'>"
+                            f"<meta name=viewport content='width=device-width,initial-scale=1'><meta name=referrer content=no-referrer>"
                             f"<style>body{{font:15px sans-serif;margin:24px auto;max-width:1100px;padding:0 16px;background:#f7f8fc;color:#17223b}}"
                             f"td,th{{border:1px solid #ccd;padding:8px}}table{{border-collapse:collapse;width:100%;overflow-wrap:anywhere}}"
                             f"section,fieldset{{background:white;padding:16px;margin:16px 0;border:1px solid #ccd;border-radius:10px}}"
                             f"label{{display:block;margin:12px 0}}input,textarea,select,button{{font:inherit;padding:8px;max-width:100%;box-sizing:border-box}}"
                             f"textarea{{display:block;width:100%}}button{{cursor:pointer;background:#234dbe;color:white;border:0;border-radius:6px;margin:6px 0}}"
                             f"nav{{margin:16px 0}}a{{color:#234dbe}}.notice{{padding:12px;background:#e8edff}}"
-                            f"</style><header><a href='/'>상품 목록</a> · <a href='/import'>상품 가져오기</a> · <a href='/import/url'>주소로 상품 추가</a>"
+                            f"</style><header><a href='/'>상품 목록</a> · <a href='/import'>상품 가져오기</a> · <a href='/import/url'>주소로 상품 추가</a> · <a href='/capture'>Chrome 확장으로 가져오기</a>"
                             f"<p class=notice>구매대행 시연 · 실제 판매 채널 등록 없이 모의 흐름을 확인합니다.</p></header>{body}",
-                            headers={"Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'",
+                            headers={"Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; img-src https: http:; form-action 'self'",
                                      "X-Frame-Options": "DENY", "Cache-Control": "no-store"})
 
     @app.exception_handler(ValidationError)
@@ -232,6 +233,143 @@ def create_app(store: Store, username: str, password: str, allow_hosts: tuple[st
         return page(f"<h1>상품 저장: {state}</h1><p>{E(item['title_src'])}</p><ul>{options}</ul>{warn}"
                     f"<p>가격과 옵션이 페이지와 맞는지 꼭 확인하세요.</p>"
                     f"<a href='/product/{pid}'>상품 화면에서 가격 계산·번역 계속</a>")
+
+    # ---- Chrome 확장 수집 ----
+    @app.post("/capture")
+    async def capture_receive(request: Request):
+        """Called by the extension popup after the user clicks. Pairing code instead of Basic auth."""
+        host = request.client.host if request.client else ""
+        try:
+            loopback = ipaddress.ip_address(host).is_loopback
+        except ValueError:
+            loopback = False
+        if not loopback and host not in allow_hosts:
+            return JSONResponse({"ok": False, "error": "loopback only"}, status_code=403)
+        if not (request.headers.get("origin") or "").startswith("chrome-extension://"):
+            return JSONResponse({"ok": False, "error": "확장 프로그램에서만 보낼 수 있습니다."}, status_code=403)
+        sent = request.headers.get("x-capture-token", "")
+        if not sent or not secrets.compare_digest(sent.encode(), store.capture_token().encode()):
+            return JSONResponse({"ok": False, "error": "연결 코드가 맞지 않습니다. 검토 화면의 'Chrome 확장으로 가져오기'에서 코드를 다시 복사하세요."},
+                                status_code=401)
+        if "application/json" not in request.headers.get("content-type", ""):
+            return JSONResponse({"ok": False, "error": "JSON만 받습니다."}, status_code=415)
+        body = bytearray()
+        async for chunk in request.stream():
+            body.extend(chunk)
+            if len(body) > MAX_CAPTURE_BYTES:
+                return JSONResponse({"ok": False, "error": "데이터가 너무 큽니다."}, status_code=413)
+        try:
+            payload = json.loads(body.decode("utf-8"))
+            data = validate_capture(payload)
+        except ValidationError as ex:  # subclass of ValueError: must come first
+            return JSONResponse({"ok": False, "error": str(ex)}, status_code=422)
+        except (ValueError, UnicodeError):
+            return JSONResponse({"ok": False, "error": "JSON 형식이 올바르지 않습니다."}, status_code=400)
+        cid = store.add_capture(data["item_id"], data["url"], data)
+        port = request.url.port or 8765
+        return JSONResponse({"ok": True, "capture_id": cid, "review_url": f"http://127.0.0.1:{port}/capture/{cid}",
+                             "images": len(data["images"]) + len(data["detail_images"]),
+                             "price_found": bool(first_price(data["price_texts"]))})
+
+    @app.get("/capture", response_class=HTMLResponse)
+    def capture_home(request: Request):
+        guard(request, False)
+        token = store.capture_token()
+        rows = "".join(
+            f"<tr><td><a href='/capture/{r['id']}'>{r['id']}</a></td><td>{E(r['data'].get('title', ''))}</td>"
+            f"<td>{E(', '.join(r['data'].get('selected_options', [])) or '-')}</td>"
+            f"<td>{'저장됨' if r['status'] == 'saved' else '검토 대기'}</td><td>{E(r['created_at'][:16])}</td></tr>"
+            for r in store.list_captures())
+        return page(
+            "<h1>Chrome 확장으로 가져오기</h1>"
+            "<section><h2>처음 한 번: 확장 프로그램 설치</h2><ol>"
+            "<li>Chrome 주소창에 <b>chrome://extensions</b> 를 입력합니다.</li>"
+            "<li>오른쪽 위 <b>개발자 모드</b>를 켭니다.</li>"
+            "<li><b>압축해제된 확장 프로그램을 로드합니다</b>를 누르고, AUTO-NAVER 폴더 안의 <b>chrome_extension</b> 폴더를 고릅니다.</li>"
+            "<li>퍼즐 모양 아이콘에서 <b>AUTO-NAVER 상품 가져오기</b>를 고정(핀)합니다.</li>"
+            "<li>확장 아이콘을 누르고, 아래 <b>연결 코드</b>를 붙여넣은 뒤 <b>저장</b>을 누릅니다.</li></ol>"
+            f"<label>연결 코드 <input readonly value='{E(token, quote=True)}' style='width:100%'></label>"
+            "<p>연결 코드는 이 PC의 검토 프로그램과 확장 프로그램만 아는 값입니다. 다른 사람에게 보내지 마세요.</p>"
+            "<form method=post action='/capture/token/rotate'><button>연결 코드 새로 만들기</button></form></section>"
+            "<section><h2>상품 가져오기</h2><ol>"
+            "<li>Chrome에서 타오바오/티몰 상품 페이지를 엽니다. 로그인이 필요하면 직접 로그인합니다.</li>"
+            "<li>원하는 옵션(색상·사이즈)을 누르고, 상세 이미지를 보려면 페이지 끝까지 한 번 내립니다.</li>"
+            "<li>확장 아이콘 → <b>이 상품 가져오기</b>를 누릅니다.</li>"
+            "<li>나오는 <b>검토 화면 열기</b>에서 가격·이미지를 확인하고 저장합니다. 다른 옵션은 그 옵션을 누른 뒤 다시 가져오면 같은 상품에 추가됩니다.</li></ol>"
+            "<p>확장 프로그램은 버튼을 누른 그 탭의 화면만 읽습니다. 로그인·보안 확인 화면이면 멈추고 알려줍니다.</p></section>"
+            "<h2>가져온 목록</h2><table><tr><th>번호</th><th>원문 제목</th><th>선택 옵션</th><th>상태</th><th>시각(UTC)</th></tr>"
+            f"{rows}</table>")
+
+    @app.post("/capture/token/rotate")
+    async def capture_rotate(request: Request):
+        guard(request, True)
+        store.capture_token(rotate=True)
+        return page("<h1>연결 코드를 새로 만들었습니다</h1><p>확장 프로그램에 새 코드를 다시 저장하세요.</p>"
+                    "<a href='/capture'>돌아가기</a>")
+
+    def capture_or_404(cid):
+        cap = store.get_capture(cid)
+        if cap is None:
+            raise HTTPException(404, "가져온 기록 없음")
+        return cap
+
+    @app.get("/capture/{cid}", response_class=HTMLResponse)
+    def capture_review(cid: int, request: Request):
+        guard(request, False)
+        cap = capture_or_404(cid)
+        d = cap["data"]
+        existing = store.find_product("taobao", cap["item_id"])
+        def figure(u, checked):
+            return (f"<label style='display:inline-block;width:160px;vertical-align:top'>"
+                    f"<input type=checkbox name=images value='{E(u, quote=True)}' {'checked' if checked else ''}> "
+                    f"<img src='{E(u, quote=True)}' alt='' style='width:150px;height:150px;object-fit:contain;background:#eee'></label>")
+        main = "".join(figure(u, True) for u in d["images"]) or "<p>대표 이미지를 찾지 못했습니다.</p>"
+        detail = "".join(figure(u, True) for u in d["detail_images"]) or "<p>상세 이미지를 찾지 못했습니다.</p>"
+        notes = "".join(f"<li>{E(n)}</li>" for n in d["notes"])
+        prices = " / ".join(E(t) for t in d["price_texts"]) or "가격 표시를 찾지 못했습니다"
+        have = ("" if not existing else
+                f"<p class=notice>이미 저장된 상품입니다(옵션 {len(existing['options'])}개). 저장하면 이 옵션이 추가되거나 갱신됩니다. "
+                f"<a href='/product/{existing['id']}'>저장된 상품 보기</a></p>")
+        days = (existing or {}).get("est_delivery_days") or {}
+        return page(
+            f"<h1>가져온 상품 확인</h1>{have}<p><b>{E(d['title'])}</b></p>"
+            f"<p><a href='{E(cap['url'], quote=True)}' rel=noreferrer target=_blank>{E(cap['url'])}</a> · 가져온 시각 {E(d['captured_at'])}</p>"
+            + (f"<ul>{notes}</ul>" if notes else "") +
+            f"<form method=post action='/capture/{cid}/save'>"
+            "<section><h2>1. 옵션과 가격</h2>"
+            f"<p>화면에 보인 가격: {prices}</p>"
+            "<p>선택하지 않은 옵션의 가격은 추측하지 않습니다. 다른 옵션은 그 옵션을 누른 뒤 다시 가져오세요.</p>"
+            f"<label>옵션 이름(원문) <input name=option_name value='{E(' / '.join(d['selected_options']) or '기본', quote=True)}' required></label>"
+            f"<label>이 옵션의 구매 가격(위안) <input name=unit_price value='{E(first_price(d['price_texts']), quote=True)}' required inputmode=decimal></label>"
+            "<label>무게(g, 모르면 비움) <input name=weight_g inputmode=decimal></label></section>"
+            "<section><h2>2. 이미지</h2><p>쓸 이미지만 체크된 상태로 두세요.</p>"
+            f"<h3>대표 이미지</h3>{main}<h3>상세 이미지</h3>{detail}"
+            "<label>이미지 주소 직접 추가(한 줄에 하나) <textarea name=image_urls rows=2></textarea></label></section>"
+            "<section><h2>3. 배송과 판매 확인</h2>"
+            f"<label>예상 배송 기간 최소(일) <input name=delivery_min value='{days.get('min', '')}' inputmode=numeric></label>"
+            f"<label>최대(일) <input name=delivery_max value='{days.get('max', '')}' inputmode=numeric></label>"
+            "<label><input type=checkbox name=sale_allowed value=yes> 한국에서 판매해도 되는 상품인지 확인했습니다</label>"
+            "<button>확인하고 저장</button></section></form>")
+
+    @app.post("/capture/{cid}/save")
+    async def capture_save(cid: int, request: Request):
+        actor = guard(request, True)
+        raw = await fields(request, multiple=True)
+        form = {k: (v if k == "images" else v[0]) for k, v in raw.items()}
+        form.setdefault("images", [])
+        cap = capture_or_404(cid)
+        existing = store.find_product("taobao", cap["item_id"])
+        item = product_from_capture(cap, existing, form)
+        counts = store.upsert_products([item], actor)
+        saved = store.find_product("taobao", cap["item_id"])
+        store.mark_capture_saved(cid, saved["id"])
+        from .workflow import screen_blockers
+        blockers = screen_blockers(item)
+        state = "새로 추가" if counts["added"] else "옵션 추가·갱신" if counts["updated"] else "변경 없음"
+        return page(f"<h1>상품 저장: {state}</h1><p>{E(item['title_src'])}</p>"
+                    f"<p>옵션 {len(item['options'])}개 · 이미지 {len(item['images'])}개</p>"
+                    + ("" if not blockers else "<p>승인 전에 해결할 것: " + E(" / ".join(blockers)) + "</p>") +
+                    f"<a href='/product/{saved['id']}'>상품 화면에서 가격 계산·번역 계속</a> · <a href='/capture'>가져온 목록</a>")
 
     @app.post("/product/{pid}/translation/assist")
     async def translation_assist_save(pid: int, request: Request):
