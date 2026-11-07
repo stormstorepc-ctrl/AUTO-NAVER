@@ -171,7 +171,8 @@ def start(state_path: Path = STATE_FILE) -> int:
         state_path.write_text(json.dumps({"pid": os.getpid(), **me}), encoding="utf-8")
     print(f"Open http://{HOST}:{PORT} in Chrome. Default username: reviewer. Press Ctrl+C to stop.", flush=True)
     try:
-        server = uvicorn.Server(uvicorn.Config(app, host=HOST, port=PORT, use_colors=False)  # old consoles print color codes as ←[32m)
+        # Old Windows consoles print color codes literally (e.g. "←[32m"), so log plain text.
+        server = uvicorn.Server(uvicorn.Config(app, host=HOST, port=PORT, use_colors=False))
         server.run()
         return 0 if server.started else 1
     finally:
