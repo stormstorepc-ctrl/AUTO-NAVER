@@ -92,3 +92,16 @@ Windows 버전과 설치된 Python 버전은 보고받지 못했다.
   → 결과를 표시한 뒤 `pause`로 창을 유지하도록 수정했다. Windows 재확인은 아직 하지 않았다.
 - 사용자 확인(d0ac15f): `purchasing_stop.bat` 실행 결과 `Stopped purchasing review PID 30872.` 표시 후 창 유지.
   Windows에서 PID·생성 시각 확인과 taskkill 종료 경로가 동작함을 사용자 실행으로 확인했다.
+
+## 6. 새 폴더 설치 실패 보고 (2026-11-07, 커밋 01fbb2c ZIP)
+
+사용자 화면: `[1/5]` → `[2/5] Looking for Python 3.12...` → 곧바로 "Python 3.12 could not be installed automatically."
+"Python 3.12 is missing. Installing..." 줄이 없으므로 `where py`가 실패했고(py 실행기를 PATH에서 못 찾음),
+PATH의 `python`도 3.12 확인에 실패한 경로로 판단한다. 이전 설치 성공 때와 무엇이 달라졌는지는 **미확인**.
+
+수정:
+- `py`를 못 쓰거나 `py install 3.12`가 실패해도 바로 포기하지 않고, 설치된 3.12를 직접 찾는다:
+  `%LOCALAPPDATA%\Python\pythoncore-3.12-64` (Python Install Manager), `%LOCALAPPDATA%\Programs\Python\Python312`,
+  `%ProgramFiles%\Python312` (python.org 설치), 마지막으로 PATH의 `python`.
+- 그래도 실패하면 `where py`, `where python`, `py list` 결과를 화면에 출력해 원인을 확인할 수 있게 했다.
+- Windows 재확인은 아직 하지 않았다.

@@ -33,16 +33,22 @@ goto usepy
 :installruntime
 echo       Python 3.12 is missing. Installing it with Python Install Manager...
 py install 3.12
-if %errorlevel% neq 0 goto runtimehelp
+if %errorlevel% neq 0 goto usepython
 py -3.12 -c "%purchasing_check%" >nul 2>&1
-if %errorlevel% neq 0 goto runtimehelp
+if %errorlevel% neq 0 goto usepython
 :usepy
 set "purchasing_runtime=py -3.12"
 goto preparevenv
 :usepython
-python -c "%purchasing_check%" >nul 2>&1
-if %errorlevel% neq 0 goto runtimehelp
-set "purchasing_runtime=python"
+rem "py" is not usable here. Look for an installed Python 3.12 directly:
+rem Python Install Manager folder, python.org per-user and all-users folders, then PATH.
+set "purchasing_runtime="
+call :tryruntime "%LOCALAPPDATA%\Python\pythoncore-3.12-64\python.exe"
+if not defined purchasing_runtime call :tryruntime "%LOCALAPPDATA%\Programs\Python\Python312\python.exe"
+if not defined purchasing_runtime call :tryruntime "%ProgramFiles%\Python312\python.exe"
+if not defined purchasing_runtime call :tryruntime "python"
+if not defined purchasing_runtime goto runtimehelp
+echo       Found Python 3.12: %purchasing_runtime%
 
 :preparevenv
 echo [3/5] Creating the virtual environment with %purchasing_runtime%...
@@ -72,7 +78,15 @@ pause
 exit /b 0
 
 :runtimehelp
-echo Python 3.12 could not be installed automatically.
+echo.
+echo ---- Diagnostics (please send this part if you ask for help) ----
+echo where py:
+where py 2>&1
+echo where python:
+where python 2>&1
+py list 2>&1
+echo ------------------------------------------------------------------
+echo Python 3.12 could not be found or installed automatically.
 echo Check the installation error above and your Internet connection.
 echo Older Python launchers do not support "py install".
 echo Install Python 3.12 from https://www.python.org/downloads/windows/ and run this file again.
@@ -84,3 +98,9 @@ echo Setup failed at the step shown above (exit code %errorlevel%). Later steps 
 echo Application data was not removed. Any previous environment backup was kept.
 pause
 exit /b 1
+
+:tryruntime
+"%~1" -c "%purchasing_check%" >nul 2>&1
+if %errorlevel% neq 0 exit /b 1
+set "purchasing_runtime="%~1""
+exit /b 0
