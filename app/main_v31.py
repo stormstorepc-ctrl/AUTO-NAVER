@@ -92,6 +92,9 @@ def smartstore(product_id:int,request:Request,db:Session=Depends(get_db)):
     g=guard(request)
     if g:return g
     p=db.get(Product,product_id)
+    if p and p.smartstore_product_id:
+        log(db,'SMARTSTORE_REGISTER',f'이미 등록된 상품이라 건너뜀 상품번호={p.smartstore_product_id}',p.id,'WARN'); db.commit()
+        return RedirectResponse('/admin',303)
     if p:
         try:
             if not p.approved: raise RuntimeError('승인되지 않은 상품입니다.')
