@@ -180,9 +180,36 @@ def start(state_path: Path = STATE_FILE) -> int:
             state_path.unlink(missing_ok=True)
 
 
+def _windows_terminate(pid: int) -> bool:
+    """TerminateProcess through the Win32 API; returns True once the process has exited."""
+    import ctypes
+    from ctypes import wintypes
+
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.OpenProcess.restype = wintypes.HANDLE
+    kernel32.OpenProcess.argtypes = (wintypes.DWORD, wintypes.BOOL, wintypes.DWORD)
+    handle = kernel32.OpenProcess(0x0001 | 0x00100000, False, pid)  # PROCESS_TERMINATE | SYNCHRONIZE
+    if not handle:
+        print(f"OpenProcess failed (Windows error {ctypes.get_last_error()}).", file=sys.stderr)
+        return False
+    try:
+        if not kernel32.TerminateProcess(handle, 1):
+            print(f"TerminateProcess failed (Windows error {ctypes.get_last_error()}).", file=sys.stderr)
+            return False
+        return kernel32.WaitForSingleObject(handle, 5000) == 0  # WAIT_OBJECT_0
+    finally:
+        kernel32.CloseHandle(handle)
+
+
 def _terminate(pid: int) -> bool:
     if os.name == "nt":
+        # taskkill.exe returned "Access denied" in a reported Windows run where the
+        # same process could be ended directly, so call the API first.
+        if _windows_terminate(pid):
+            return True
         out = subprocess.run(["taskkill", "/PID", str(pid), "/F"], capture_output=True, text=True, errors="replace")
+        if out.returncode != 0:
+            print((out.stdout + out.stderr).strip(), file=sys.stderr)
         return out.returncode == 0
     import signal
     os.kill(pid, signal.SIGTERM)

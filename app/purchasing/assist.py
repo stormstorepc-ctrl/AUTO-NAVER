@@ -105,7 +105,8 @@ def parse_product_reply(url: str, reply: str, sale_allowed_confirmed: bool) -> d
             raise ValidationError("옵션 형식이 올바르지 않습니다.")
         price = _blank_to_none(o.get("unit_price"))
         if price is None:
-            raise ValidationError(f"{i}번째 옵션 가격이 없습니다. 페이지에서 가격을 확인해 직접 넣어주세요.")
+            raise ValidationError(f"{i}번째 옵션 가격이 없습니다. 타오바오에서 그 옵션을 눌러 가격을 확인한 뒤, "
+                                  "Claude 답변 칸의 \"unit_price\": \"\" 따옴표 사이에 숫자를 직접 넣고 다시 저장하세요.")
         options.append({"source_option_id": f"opt{i}", "name": o.get("name") or f"옵션 {i}",
                         "unit_price": str(price).replace(",", "").replace("¥", "").replace("元", "").strip(),
                         "currency": "CNY", "quantity": 1, "weight_g": _blank_to_none(o.get("weight_g"))})

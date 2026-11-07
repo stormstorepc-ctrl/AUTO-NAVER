@@ -51,3 +51,15 @@ def prepare(store, n=3, channels=("smartstore",), now=NOW, account="mock:a1", ap
         for ch in channels:
             assert approve(store, ids, ch, account, "tester", now) == {}
     return ids
+
+
+@pytest.fixture
+def frozen_now(monkeypatch):
+    """Pin the app clock near NOW so fixture quotes (built at NOW) are not expired on later calendar days."""
+    from datetime import timedelta
+    import app.purchasing.web as web
+    import app.purchasing.workflow as workflow
+    fixed = NOW + timedelta(hours=1)
+    for module in (web, workflow):
+        monkeypatch.setattr(module, "now_utc", lambda: fixed)
+    return fixed

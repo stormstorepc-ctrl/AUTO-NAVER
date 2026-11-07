@@ -18,7 +18,7 @@ def test_requires_password_configured(store):
         create_app(store, "rev", "")
 
 
-def test_auth_and_escape(store):
+def test_auth_and_escape(store, frozen_now):
     ids = prepare(store, 2, approve_them=False)
     from app.purchasing.workflow import MockChannelAdapter  # noqa
     c = client(store)
@@ -31,7 +31,7 @@ def test_auth_and_escape(store):
     assert "default-src 'none'" in d.headers["content-security-policy"]
 
 
-def test_state_change_needs_origin_and_auth(store):
+def test_state_change_needs_origin_and_auth(store, frozen_now):
     ids = prepare(store, 2, approve_them=False)
     c = client(store)
     body = {"channel": "smartstore", "account": "mock:a1", "action": "approve", "ids": [str(i) for i in ids]}
