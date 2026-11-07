@@ -1,28 +1,27 @@
 # Claude 피드백 (최신)
 
-- 작성: 2026-11-07 17:xx UTC (2026-11-08 02:xx KST), Claude
-- 사용자 결정: Claude 채팅에서 직접 "Chrome 확장 방식 진행" (댓글 6709406967 제안 채택)
-- **다음 테스트 커밋: f3c9d27**
-- 설명 문서: `docs/purchasing-chrome-extension.md`
+- 작성: 2026-11-07 19:xx UTC (2026-11-08 04:xx KST), Claude 정기 확인
+- 반영한 결과: PR #9 댓글 6711089604 (**Windows 10 Home 22H2 / Python 3.12.10**), 6711128206 (Linux / Python 3.12.14)
+- **다음 테스트 커밋: da5fca8**
 - Claude 정기 확인 예약: 활성 (매시 45분 UTC)
 
-## 새로 만든 것
-- `chrome_extension/` (MV3): 버튼을 누른 탭만 읽음(activeTab). 제목, 가격 문구 원문, 선택 옵션, 대표·상세 이미지 주소. 로그인/보안 화면이면 중단·안내.
-- `POST /capture`: 연결 코드 + `chrome-extension://` Origin + loopback + 512KB + 형식 검사.
-- `/capture`: 설치 안내·연결 코드·가져온 목록. `/capture/{번호}`: 가격 제안값·옵션 이름·이미지 체크·배송기간·판매 확인 → 저장(같은 상품이면 옵션 추가). 선택 안 한 옵션 가격은 추측하지 않음.
+## 고친 것
+| 보고 | 원인 | 수정 | Claude 검증 (Linux) |
+|---|---|---|---|
+| 일반 Chrome 폼 제출 403 `origin check failed` (샘플 가져오기, capture 저장) | ChatGPT 추정이 맞음: f3c9d27에서 모든 화면에 넣은 `<meta name=referrer content=no-referrer>` 때문에 Chrome이 `Origin: null`을 보냄 | 전체 화면 메타 제거. 외부 이미지에만 `referrerpolicy=no-referrer`. Origin 검사는 그대로(‘null’ 허용 안 함) | 새 Chromium 테스트가 **헤더를 덧붙이지 않은 실제 폼 제출**로 가져오기 → capture 저장 2회(옵션 2개 병합) → 연결 코드 재발급 확인. 옛 메타를 다시 넣으면 이 테스트가 403으로 실패함을 확인 |
+| 가격 제안 오인식 4건 + 분리 span | `first_price`가 첫 숫자만 사용 | ¥/￥ 앞 또는 元 뒤 금액, 또는 숫자만 있는 문구만 제안. 범위(12.5-30)·판매량·조건 숫자는 **비워서 직접 입력**. extract.js는 `¥`/`39`/`.90` 분리 span을 부모에서 통째로 읽음 | 보고서 6개 + 범위·판매량 등 12개 케이스, 실제 Chromium fixture에서 `¥39.90` |
+| 같은 옵션 재수집 시 무게·비용 6필드 소실 | 옵션을 새 dict로 교체 | 기존 옵션 위에 이름·가격만 갱신, 무게는 새로 입력했을 때만 교체 | 보고서 재현 케이스 통과 |
+| lazy placeholder → 이미지 0개 / 추천 이미지 혼입 | 작은 src를 먼저 사용, document.images 전체 사용 | 작은 placeholder + data-src면 data-src 사용(대기 이미지로 안내). 갤러리/상세 영역 밖·추천 영역 이미지는 `other_images`로 분리, 검토 화면에서 **기본 해제** | fixture에 placeholder·추천 블록 추가, Chromium에서 확인 |
 
-## Claude 검증 (Linux)
-- `pytest -q tests/` **146 passed**
-- 실제 Chromium + 합성 페이지(가짜 HTML, 네트워크 없음)에서 extract.js 결과 확인, 확장 로드 후 확장 페이지 → 로컬 서버 POST 200 / 틀린 코드 401
-- **미검증**: 실제 타오바오/티몰 페이지(Claude 환경 접속 차단), 실제 버튼 클릭(activeTab), Windows
+`pytest -q tests/` **161 passed** (Chromium 브라우저 테스트 5개 포함, 2회 연속 실행).
 
 ## 다시 테스트할 단계
-1. `python -m pytest -q tests/purchasing` (기대: 실패 0. Windows에서는 Chromium을 못 찾으면 브라우저 테스트가 skip될 수 있음 → skip 개수와 사유 기록)
-2. Windows: 서버 시작 → `/capture`에서 연결 코드 확인 → chrome://extensions 개발자 모드 → `chrome_extension` 폴더 로드 → 팝업에 코드 저장
-3. **사용자 Chrome에서** 실제 타오바오/티몰 상품 1개: 로그인(필요 시 사용자 직접) → 옵션 선택 → 끝까지 스크롤 → "이 상품 가져오기" → 팝업 결과(가격 찾음 여부, 이미지 수) 기록
-4. "검토 화면 열기" → 제목·가격 제안값·옵션 이름이 페이지와 같은지, 이미지가 보이는지 대조 → 저장 → 다른 옵션으로 한 번 더 가져와 옵션 2개가 되는지
-5. 로그인 안 된 상태/보안 확인 화면에서 눌렀을 때 안내 문구
-6. 실패하면: 팝업 문구, 검토 화면에서 비어 있던 항목(제목/가격/옵션/이미지)을 기록. 가능하면 해당 영역의 HTML 클래스 이름(개인정보 없이)을 남기면 추출 규칙을 맞춘다.
+1. `python -m pytest -q -rs tests/purchasing` (Windows는 POSIX 전용 2개 + 서버 띄우는 브라우저 테스트 2개 skip 예상 → 사유 기록)
+2. **헤더를 덧붙이지 않은 실제 브라우저 기본 제출**로: 샘플 파일 가져오기 → 가격 → 번역 → 승인 → 모의 등록 → ZIP
+3. capture: 합성 POST(테스트 연결 코드) → `/capture/{n}` → 배송·판매 확인 → "확인하고 저장" → 다른 옵션으로 한 번 더 → 옵션 2개
+4. 같은 옵션 재수집(무게 비움) → 무게·비용 유지
+5. 독립 검사 `test_requirements.py`(가격 4 + 재수집 1)와 `extract_diagnostics.cjs` 재실행. 참고: extract_diagnostics의 test double은 `document.querySelectorAll`만 흉내 내므로, 새 extract.js의 `el.contains`/`closest(GALLERY)` 호출에 맞춰 double을 보완해야 할 수 있음 (실제 Chromium 테스트는 위 1번에 포함)
 
-## 아직 하지 않은 것
-- 이미지 OCR·한글 이미지, 3단계 화면 축소, 7개 일괄, 실제 스마트스토어 등록: 사용자 결정 대기(유료/권한/범위).
+## 아직 안 된 것
+- 실제 타오바오/티몰 페이지, 실제 확장 버튼 클릭(activeTab), Windows에서 확장 로드: 미검증
+- OCR 한글 이미지, 7개 일괄, 3단계 화면, 실제 스마트스토어 등록: 사용자 결정 대기
