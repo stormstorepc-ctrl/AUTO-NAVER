@@ -212,7 +212,9 @@ def create_app(store: Store, username: str, password: str, allow_hosts: tuple[st
     async def url_import_save(request: Request):
         actor = guard(request, True)
         form = await fields(request)
-        item = parse_product_reply(form.get("url", ""), form.get("reply", ""), form.get("sale_allowed") == "yes")
+        item = parse_product_reply(form.get("url", ""), form.get("reply", ""), form.get("sale_allowed") == "yes",
+                                   form.get("image_urls", ""), form.get("delivery_min", "").strip(),
+                                   form.get("delivery_max", "").strip())
         counts = store.upsert_products([item], actor)
         with store.tx() as c:
             pid = c.execute("SELECT id FROM products WHERE source=? AND source_product_id=?",
@@ -220,8 +222,13 @@ def create_app(store: Store, username: str, password: str, allow_hosts: tuple[st
         state = "새로 추가" if counts["added"] else "정보 변경" if counts["updated"] else "변경 없음"
         options = "".join(f"<li>{E(o['name'])} · {E(o['unit_price'])}위안"
                           f"{' · ' + E(o['weight_g']) + 'g' if o.get('weight_g') else ' · 무게 미확인'}</li>" for o in item["options"])
-        warn = "" if item["compliance"]["sale_allowed_confirmed"] else \
-            "<p>판매 가능 여부를 확인하지 않아 승인 단계에서 막힙니다. 확인 후 다시 저장하세요.</p>"
+        from .workflow import screen_blockers
+        blockers = screen_blockers(item)
+        days = item.get("est_delivery_days")
+        facts = (f"<p>이미지 {len(item['images'])}개 · 배송 "
+                 f"{E(str(days['min']) + '~' + str(days['max']) + '일') if days else '미입력'}</p>")
+        warn = facts + ("" if not blockers else
+                        "<p>승인 전에 해결할 것: " + E(" / ".join(blockers)) + "</p>")
         return page(f"<h1>상품 저장: {state}</h1><p>{E(item['title_src'])}</p><ul>{options}</ul>{warn}"
                     f"<p>가격과 옵션이 페이지와 맞는지 꼭 확인하세요.</p>"
                     f"<a href='/product/{pid}'>상품 화면에서 가격 계산·번역 계속</a>")

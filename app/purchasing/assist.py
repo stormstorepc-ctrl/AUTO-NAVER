@@ -52,11 +52,14 @@ def product_request(url: str, page_text: str) -> str:
  "category": "한국어 카테고리 (예: 수납용품)",
  "description_src": "중국어 원문의 상품 설명, 규격, 소재, 구성품 (원문 그대로)",
  "restricted_flags": [],
+ "images": ["페이지 글에 이미지 주소(http로 시작)가 있으면 넣고, 없으면 빈 목록"],
+ "est_delivery_days": {{"min": 숫자, "max": 숫자}} 또는 null,
  "options": [{{"name": "중국어 원문 옵션명", "unit_price": "숫자(위안)", "weight_g": "숫자 또는 빈 문자열"}}]}}
 
 규칙:
 - 페이지에 없는 값은 지어내지 말고 빈 문자열로 두세요. 특히 가격과 무게.
 - 가격은 위안(元/¥) 숫자만 적으세요. 할인가가 보이면 실제 결제 가격을 쓰세요.
+- est_delivery_days는 페이지에 배송 기간(일)이 보일 때만 적고, 없으면 null로 두세요.
 - 색상·사이즈 같은 옵션 조합마다 options 항목을 하나씩 만드세요. 옵션이 없으면 1개만 만드세요.
 - restricted_flags에는 해당하는 것만 넣으세요: {flags}
   (electric=전기제품, battery=배터리, food=식품, cosmetic=화장품, medical=의료, children=어린이용, counterfeit=브랜드 모조품 의심, hazmat=위험물)
@@ -92,7 +95,59 @@ def _blank_to_none(v):
     return None if isinstance(v, str) and not v.strip() else v
 
 
-def parse_product_reply(url: str, reply: str, sale_allowed_confirmed: bool) -> dict:
+def _image_list(values) -> list[str]:
+    """Image addresses from the reply or the form: one per item/line, protocol-relative made https, deduplicated."""
+    if values is None:
+        return []
+    if isinstance(values, str):
+        values = values.splitlines()
+    if not isinstance(values, list):
+        raise ValidationError("images는 이미지 주소 목록이어야 합니다.")
+    out = []
+    for v in values:
+        if not isinstance(v, str):
+            raise ValidationError("이미지 주소 형식이 올바르지 않습니다.")
+        v = v.strip()
+        if not v:
+            continue
+        if v.startswith("//"):
+            v = "https:" + v
+        if v not in out:
+            out.append(v)
+    if len(out) > 50:
+        raise ValidationError("이미지는 최대 50개입니다.")
+    return out
+
+
+def _delivery_days(value):
+    """{"min","max"} days as ints, or None when not given. A given but invalid value is an error, not dropped."""
+    if value in (None, "", {}):
+        return None
+    if not isinstance(value, dict):
+        raise ValidationError("est_delivery_days는 {\"min\": 숫자, \"max\": 숫자} 형식이어야 합니다.")
+    days = {}
+    for key in ("min", "max"):
+        v = value.get(key)
+        if isinstance(v, str) and v.strip().isdigit():
+            v = int(v.strip())
+        if isinstance(v, bool) or not isinstance(v, int):
+            raise ValidationError("배송 기간(min, max)은 숫자(일)로 넣어주세요.")
+        days[key] = v
+    return days
+
+
+def _merge_images(from_reply, from_form: str) -> list[str]:
+    merged = _image_list(from_reply)
+    for v in _image_list(from_form):
+        if v not in merged:
+            merged.append(v)
+    if len(merged) > 50:
+        raise ValidationError("이미지는 최대 50개입니다.")
+    return merged
+
+
+def parse_product_reply(url: str, reply: str, sale_allowed_confirmed: bool,
+                        extra_images: str = "", delivery_min: str = "", delivery_max: str = "") -> dict:
     """Build a validated product from the chat reply. Identity fields come from the URL, not the reply."""
     item_id, clean_url = taobao_item(url)
     data = _json_object(reply)
@@ -116,7 +171,10 @@ def parse_product_reply(url: str, reply: str, sale_allowed_confirmed: bool) -> d
     return validate_product({
         "source": "taobao", "source_product_id": item_id, "supply_url": clean_url,
         "title_src": data.get("title_src"), "category": data.get("category") or "",
-        "description_src": data.get("description_src") or "", "images": [],
+        "description_src": data.get("description_src") or "",
+        "images": _merge_images(data.get("images"), extra_images),
+        "est_delivery_days": (_delivery_days({"min": delivery_min, "max": delivery_max})
+                              if (delivery_min or delivery_max) else _delivery_days(data.get("est_delivery_days"))),
         "compliance": {"sale_allowed_confirmed": bool(sale_allowed_confirmed),
                        "restricted_flags": [f for f in flags if f in ALLOWED_RESTRICTED_FLAGS]},
         "options": options,

@@ -56,6 +56,12 @@ def url_import_reply_form(url, request_text):
             "<section><h2>3. 답변 붙여넣고 저장</h2>"
             f"<form method=post action='/import/url/save'><input type=hidden name=url value='{E(url, quote=True)}'>"
             "<label>Claude 답변 <textarea name=reply rows=10 required></textarea></label>"
+            "<label>상품 이미지 주소 (한 줄에 하나. 타오바오에서 사진을 오른쪽 클릭 → '이미지 주소 복사') "
+            "<textarea name=image_urls rows=4></textarea></label>"
+            "<p>예상 배송 기간(일, 중국 출발부터 고객 도착까지). 비워두면 답변의 값을 씁니다.</p>"
+            "<label>최소 <input name=delivery_min inputmode=numeric size=4></label>"
+            "<label>최대 <input name=delivery_max inputmode=numeric size=4></label>"
+            "<p>이미지와 배송 기간이 없어도 저장은 되지만, 승인 단계에서 막힙니다.</p>"
             "<label><input type=checkbox name=sale_allowed value=yes> 한국에서 판매해도 되는 상품인지 확인했습니다 "
             "(체크하지 않으면 저장은 되지만 승인 단계에서 막힙니다)</label>"
             "<button>상품 저장</button></form></section>")

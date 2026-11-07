@@ -1,4 +1,6 @@
 """Copy-paste flow for real Taobao products and chat translations. No network access is used."""
+import json
+
 import pytest
 
 from app.purchasing.assist import (parse_product_reply, parse_translation_reply, product_request, taobao_item,
@@ -73,7 +75,7 @@ def test_url_import_and_translation_through_web(store):
     r = c.post("/import/url", headers=ORIGIN, data={"url": URL, "page_text": PAGE})
     assert r.status_code == 200 and "712345678901" in r.text and "Claude 답변" in r.text
     r = c.post("/import/url/save", headers=ORIGIN, data={"url": URL, "reply": REPLY})
-    assert r.status_code == 200 and "새로 추가" in r.text and "승인 단계에서 막힙니다" in r.text
+    assert r.status_code == 200 and "새로 추가" in r.text and "승인 전에 해결할 것" in r.text and "이미지 없음" in r.text
     r = c.post("/import/url/save", headers=ORIGIN, data={"url": URL, "reply": REPLY, "sale_allowed": "yes"})
     assert "정보 변경" in r.text
     page = c.get("/product/1", headers=AUTH)
@@ -89,3 +91,52 @@ def test_url_import_and_translation_through_web(store):
 @pytest.mark.parametrize("path", ["/import/url", "/import/url/save", "/product/1/translation/assist"])
 def test_new_posts_require_same_origin(store, path):
     assert client(store).post(path, headers=AUTH, data={}).status_code == 403
+
+
+# Regression for ChatGPT report (PR #9 comment 6708916969): images and delivery days were dropped.
+TMALL_IDS = ("1055677150014", "965089167622", "973767259340", "963839711501",
+             "1004306345174", "979343956961", "579812880043")
+
+
+@pytest.mark.parametrize("iid", TMALL_IDS)
+def test_reply_images_and_delivery_are_kept(iid):
+    from app.purchasing.workflow import screen_blockers
+    url = f"https://detail.tmall.com/item.htm?id={iid}"
+    incoming = {"title_src": "合成测试商品", "description_src": "合成数据", "category": "테스트",
+                "options": [{"name": "测试选项", "unit_price": "1"}],
+                "images": ["https://example.invalid/synthetic-only.jpg", "//img.example.invalid/b.jpg"],
+                "est_delivery_days": {"min": 7, "max": 14}}
+    p = parse_product_reply(url, json.dumps(incoming), True)
+    assert taobao_item(url)[0] == iid
+    assert p["images"] == ["https://example.invalid/synthetic-only.jpg", "https://img.example.invalid/b.jpg"]
+    assert p["est_delivery_days"] == {"min": 7, "max": 14}
+    assert screen_blockers(p) == []
+
+
+def test_form_images_and_delivery_override_and_merge():
+    reply = json.dumps({"title_src": "x", "images": ["https://a.example/1.jpg"], "est_delivery_days": {"min": 5, "max": 9},
+                        "options": [{"name": "a", "unit_price": "1"}]})
+    p = parse_product_reply(URL, reply, True, "https://a.example/1.jpg\n\n https://a.example/2.jpg ", "10", "20")
+    assert p["images"] == ["https://a.example/1.jpg", "https://a.example/2.jpg"]
+    assert p["est_delivery_days"] == {"min": 10, "max": 20}
+
+
+@pytest.mark.parametrize("bad", [{"min": "a", "max": 3}, {"min": 9, "max": 3}, "7-14", {"min": 0, "max": 5}])
+def test_invalid_delivery_is_an_error_not_dropped(bad):
+    reply = json.dumps({"title_src": "x", "est_delivery_days": bad, "options": [{"name": "a", "unit_price": "1"}]})
+    with pytest.raises(ValidationError):
+        parse_product_reply(URL, reply, True)
+
+
+def test_non_http_image_rejected():
+    reply = json.dumps({"title_src": "x", "images": ["javascript:alert(1)"], "options": [{"name": "a", "unit_price": "1"}]})
+    with pytest.raises(ValidationError):
+        parse_product_reply(URL, reply, True)
+
+
+def test_url_import_with_images_and_delivery_has_no_screen_blockers(store):
+    c = client(store)
+    r = c.post("/import/url/save", headers=ORIGIN,
+               data={"url": URL, "reply": REPLY.replace('"battery", ', ''), "sale_allowed": "yes",
+                     "image_urls": "https://img.example.invalid/main.jpg", "delivery_min": "7", "delivery_max": "14"})
+    assert r.status_code == 200 and "이미지 1개 · 배송 7~14일" in r.text and "승인 전에 해결할 것" not in r.text
