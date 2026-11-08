@@ -6,3 +6,11 @@ __pycache__/
 artifacts/
 .naver_cafe_token.json
 .naver_cafe_state
+
+# taobao 수집기 (로그인 쿠키·수집 결과·사진은 절대 올리지 않음)
+taobao/chrome-profile/
+taobao/output/
+taobao/history.json
+taobao/*_log.txt
+taobao/_test_output.xlsx
+taobao/smartstore_upload/

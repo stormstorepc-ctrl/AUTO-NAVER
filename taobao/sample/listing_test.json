@@ -1,0 +1,36 @@
+{
+  "settings": {
+    "카테고리코드": "",
+    "원산지코드": "",
+    "A/S 전화번호": ""
+  },
+  "products": [
+    {
+      "item_id": "1004495935621",
+      "title_ko": "회전목마 스노우볼 오르골 무드등 크리스마스 선물 인테리어 소품",
+      "price_cny": 205,
+      "description": "회전하는 회전목마와 자동으로 흩날리는 눈, 은은한 조명이 어우러진 크리스마스 오르골입니다.<br>· 8곡 내장 오르골<br>· 자동 눈 날림 기능<br>· 따뜻한 무드 조명",
+      "notice_name": "회전목마 스노우볼 오르골 무드등",
+      "images": ["P1_main.jpg", "P1_add1.jpg", "P1_add2.jpg"]
+    },
+    {
+      "item_id": "1094544391143",
+      "title_ko": "크리스탈 크리스마스 캔들 무드등 LED 산타 눈사람 트리 장식",
+      "price_cny": 21.8,
+      "description": "투명한 캔들 속 산타·눈사람·트리와 반짝이는 눈송이, 촛불 조명으로 연말 분위기를 연출하는 LED 무드등입니다.",
+      "notice_name": "크리스탈 크리스마스 캔들 무드등",
+      "option_name": "디자인",
+      "options": [
+        {"name": "낮은형-산타", "price_cny": 21.8},
+        {"name": "낮은형-눈사람", "price_cny": 21.8},
+        {"name": "낮은형-트리", "price_cny": 21.8},
+        {"name": "키큰형-산타A", "price_cny": 46.8},
+        {"name": "키큰형-산타B", "price_cny": 46.8},
+        {"name": "키큰형-산타C", "price_cny": 46.8},
+        {"name": "키큰형-산타D", "price_cny": 46.8},
+        {"name": "키큰형-눈사람트리", "price_cny": 46.8}
+      ],
+      "images": ["P2_main.jpg", "P2_add1.jpg", "P2_add2.jpg", "P2_add3.jpg", "P2_add4.jpg", "P2_add5.jpg", "P2_add6.jpg", "P2_add7.jpg"]
+    }
+  ]
+}
