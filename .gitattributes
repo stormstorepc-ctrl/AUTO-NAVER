@@ -1,0 +1,3 @@
+# Windows cmd mislocates goto labels in LF-only batch files.
+*.bat -text
+*.cmd -text

@@ -1,3 +1,8 @@
+> **2026-11-05 우선순위 변경:** 사용자 지시로 구현 담당을 Claude로 되돌린다.
+> 현재 작업 브랜치 `claude/purchasing-agent-stage1-20261104`에서 `docs/claude-windows-start-urgent.md`를 먼저 읽고,
+> Windows 설치 실패와 PowerShell 서명 오류부터 해결한다. 아래 최초 1단계 지시를 새로 구현하기 전에 이 장애를 우선 처리한다.
+> 문서 저장은 Claude 실행 확인을 의미하지 않는다.
+
 # Claude 실행 요청 — T-COMMERCE-001
 
 사용자가 2026-11-04에 ChatGPT에게 Claude 전달·구현 지시·독립 검증을 요청했다.
