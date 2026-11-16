@@ -11,3 +11,4 @@ bcrypt
 pybase64
 
 tzdata
+openpyxl

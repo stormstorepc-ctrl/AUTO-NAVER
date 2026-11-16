@@ -157,6 +157,18 @@ class Store:
         with self.tx() as c:
             return [r[0] for r in c.execute("SELECT id FROM products ORDER BY id")]
 
+    # ---- 간편 설정 ----
+    def get_json_setting(self, key: str) -> dict:
+        with self.tx() as c:
+            row = c.execute("SELECT value FROM settings WHERE key=?", (key,)).fetchone()
+        return json.loads(row[0]) if row else {}
+
+    def set_json_setting(self, key: str, value: dict, actor: str = "local") -> None:
+        with self.tx() as c:
+            c.execute("INSERT INTO settings(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                      (key, canonical(value)))
+            self.audit(c, actor, "settings_saved", {"key": key})
+
     # ---- Chrome 확장 수집 ----
     def capture_token(self, rotate: bool = False) -> str:
         """Pairing code shared with the Chrome extension. Stored locally; never logged (audit redacts 'token')."""

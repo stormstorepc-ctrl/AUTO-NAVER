@@ -26,6 +26,7 @@ from .review_ui import (import_form, product_forms, sample_document, channel_nav
                         url_import_form, url_import_reply_form)
 from .assist import product_request, parse_product_reply, parse_translation_reply
 from .capture import MAX_CAPTURE_BYTES, first_price, product_from_capture, validate_capture
+from . import easy
 from .cli import week_key
 
 CHANNELS = ("smartstore", "danggeun", "bunjang")
@@ -91,7 +92,7 @@ def create_app(store: Store, username: str, password: str, allow_hosts: tuple[st
                             f"label{{display:block;margin:12px 0}}input,textarea,select,button{{font:inherit;padding:8px;max-width:100%;box-sizing:border-box}}"
                             f"textarea{{display:block;width:100%}}button{{cursor:pointer;background:#234dbe;color:white;border:0;border-radius:6px;margin:6px 0}}"
                             f"nav{{margin:16px 0}}a{{color:#234dbe}}.notice{{padding:12px;background:#e8edff}}"
-                            f"</style><header><a href='/'>상품 목록</a> · <a href='/import'>상품 가져오기</a> · <a href='/import/url'>주소로 상품 추가</a> · <a href='/capture'>Chrome 확장으로 가져오기</a>"
+                            f"</style><header><a href='/'>상품 목록</a> · <a href='/import'>상품 가져오기</a> · <a href='/import/url'>주소로 상품 추가</a> · <a href='/capture'>Chrome 확장으로 가져오기</a> · <a href='/easy'>간편 설정·네이버 엑셀</a>"
                             f"<p class=notice>구매대행 시연 · 실제 판매 채널 등록 없이 모의 흐름을 확인합니다.</p></header>{body}",
                             headers={"Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; img-src https: http:; form-action 'self'",
                                      "X-Frame-Options": "DENY", "Cache-Control": "no-store"})
@@ -233,6 +234,95 @@ def create_app(store: Store, username: str, password: str, allow_hosts: tuple[st
         return page(f"<h1>상품 저장: {state}</h1><p>{E(item['title_src'])}</p><ul>{options}</ul>{warn}"
                     f"<p>가격과 옵션이 페이지와 맞는지 꼭 확인하세요.</p>"
                     f"<a href='/product/{pid}'>상품 화면에서 가격 계산·번역 계속</a>")
+
+    # ---- 간편 설정 · 네이버 일괄등록 엑셀 ----
+    def easy_settings():
+        return {**easy.DEFAULTS, **store.get_json_setting(easy.SETTINGS_KEY)}
+
+    @app.get("/easy", response_class=HTMLResponse)
+    def easy_home(request: Request):
+        guard(request, False)
+        st = easy_settings()
+        def field(key):
+            if key == "customs":
+                opts = "".join(f"<option {'selected' if st[key] == c else ''}>{E(c)}</option>" for c in easy.CUSTOMS_CHOICES)
+                return f"<label>{E(easy.LABELS[key])} <select name={key}>{opts}</select></label>"
+            return f"<label>{E(easy.LABELS[key])} <input name={key} value='{E(st[key], quote=True)}'></label>"
+        price_fields = "".join(field(k) for k in ("margin_pct", "commission_pct", "fx_krw_per_cny", "extra_cost_krw"))
+        naver_fields = "".join(field(k) for k in ("stock", "category_code", "origin_code", "importer", "customs",
+                                                  "shipping_template_code", "as_template_code", "as_phone", "as_note"))
+        rows = ""
+        with store.tx() as c:
+            ids = [r[0] for r in c.execute("SELECT id FROM products WHERE status!='rejected' ORDER BY id")]
+            for pid in ids:
+                p = store.get_product(c, pid)
+                tr = store.latest_translation(c, pid)
+                try:
+                    prices = ", ".join(f"{easy.sale_price(o['unit_price'], st)['sale_krw']:,}원" for o in p["options"])
+                except ValidationError:
+                    prices = "설정 필요"
+                rows += (f"<tr><td><input type=checkbox name=ids value={pid} checked></td><td><a href='/product/{pid}'>{pid}</a></td>"
+                         f"<td>{E(tr['title_ko'] if tr else '(번역 없음)')}<br>{E(p['title_src'])}</td>"
+                         f"<td>{len(p['options'])}개</td><td>{E(prices)}</td><td>{len(p['images'])}개</td></tr>")
+        return page(
+            "<h1>간편 설정 · 네이버 엑셀</h1>"
+            "<form method=post action='/easy/settings'><section><h2>1. 가격 설정</h2>"
+            "<p>판매가 = (위안 가격 × 환율 + 추가 비용) × (1 + 마진) ÷ (1 − 판매 수수료), 10원 단위 올림. "
+            "수수료를 떼고도 원가의 마진%가 남습니다. 숫자를 바꾸고 저장하면 아래 가격이 전부 다시 계산됩니다.</p>"
+            f"{price_fields}</section><section><h2>2. 네이버 등록 기본값</h2>{naver_fields}"
+            "<button>설정 저장</button></section></form>"
+            "<form method=post action='/easy/naver.xlsx'><section><h2>3. 네이버 일괄등록 엑셀 만들기</h2>"
+            "<p>체크한 상품으로 스마트스토어 '상품 일괄등록' 엑셀을 만듭니다. 한국어 번역과 이미지가 있는 상품만 들어갑니다.</p>"
+            "<table><tr><th></th><th>번호</th><th>상품명</th><th>옵션</th><th>판매가</th><th>이미지</th></tr>"
+            f"{rows}</table><button>엑셀 내려받기</button> <button formaction='/easy/naver/check'>올리기 전 확인할 점 보기</button>"
+            "</section></form>")
+
+    @app.post("/easy/settings")
+    async def easy_save(request: Request):
+        actor = guard(request, True)
+        store.set_json_setting(easy.SETTINGS_KEY, easy.clean_settings(await fields(request)), actor)
+        return page("<h1>설정을 저장했습니다</h1><a href='/easy'>돌아가기</a>")
+
+    async def easy_rows(request):
+        raw = await fields(request, multiple=True)
+        ids = raw.get("ids", [])
+        if not ids or len(ids) > 500 or any(not i.isdigit() for i in ids):
+            raise ValidationError("엑셀에 넣을 상품을 1개 이상 체크하세요.")
+        st = easy_settings()
+        rows, notes = [], []
+        with store.tx() as c:
+            for pid in map(int, ids):
+                p = store.get_product(c, pid)
+                if p is None:
+                    continue
+                try:
+                    row, warnings = easy.naver_row(p, store.latest_translation(c, pid), st)
+                except ValidationError as ex:
+                    notes.append((pid, p["title_src"], [f"엑셀에서 제외: {ex}"]))
+                    continue
+                rows.append(row)
+                if warnings:
+                    notes.append((pid, row["상품명"], warnings))
+        return rows, notes
+
+    @app.post("/easy/naver/check")
+    async def easy_naver_check(request: Request):
+        guard(request, True)
+        rows, notes = await easy_rows(request)
+        items = "".join(f"<li><a href='/product/{pid}'>{pid}</a> {E(title)}<ul>"
+                        + "".join(f"<li>{E(n)}</li>" for n in ns) + "</ul></li>" for pid, title, ns in notes)
+        return page(f"<h1>올리기 전 확인할 점</h1><p>엑셀에 들어가는 상품 {len(rows)}개</p>"
+                    + (f"<ul>{items}</ul>" if items else "<p>확인할 점이 없습니다.</p>") + "<a href='/easy'>돌아가기</a>")
+
+    @app.post("/easy/naver.xlsx")
+    async def easy_naver_xlsx(request: Request):
+        guard(request, True)
+        rows, _ = await easy_rows(request)
+        if not rows:
+            raise ValidationError("엑셀에 넣을 수 있는 상품이 없습니다. '올리기 전 확인할 점 보기'로 이유를 확인하세요.")
+        return Response(easy.naver_workbook(rows),
+                        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        headers={"Content-Disposition": 'attachment; filename="naver-bulk.xlsx"', "Cache-Control": "no-store"})
 
     # ---- Chrome 확장 수집 ----
     @app.post("/capture")
