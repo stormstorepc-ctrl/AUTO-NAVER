@@ -26,7 +26,39 @@ $("open").addEventListener("click", () => { if (reviewUrl) chrome.tabs.create({ 
 
 $("capture").addEventListener("click", async () => {
   $("open").hidden = true;
-  const token = await loadToken();
+  const token = await async function captureCart(tab, token) {
+  show("장바구니를 읽는 중...");
+  let data;
+  try {
+    const [res] = await chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ["extract_cart.js"] });
+    data = res && res.result;
+  } catch (e) {
+    show("이 탭을 읽을 수 없습니다: " + e.message, "err");
+    return;
+  }
+  if (!data) { show("장바구니를 읽지 못했습니다. 새로고침한 뒤 다시 누르세요.", "err"); return; }
+  if (data.status === "no_product") { show("장바구니에서 상품을 찾지 못했습니다. 목록이 다 보인 뒤 다시 누르세요.", "err"); return; }
+  if (data.status !== "ok") { show(MESSAGES[data.status] || "가져올 수 없는 화면입니다.", "err"); return; }
+  let resp, body;
+  try {
+    resp = await fetch(APP + "/capture/cart", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-Capture-Token": token },
+      body: JSON.stringify(data),
+    });
+    body = await resp.json();
+  } catch (e) {
+    show("검토 프로그램에 연결하지 못했습니다. purchasing_start.bat 이 켜져 있는지 확인하세요.", "err");
+    return;
+  }
+  if (!resp.ok || !body.ok) { show(body.error || ("오류 " + resp.status), "err"); return; }
+  reviewUrl = body.review_url;
+  show("장바구니 상품 " + body.items + "개를 가져왔습니다.\n목록에서 상품을 하나씩 열고, 열린 상품 페이지에서 이 버튼을 다시 누르면 사진까지 저장됩니다.", "ok");
+  $("open").textContent = "장바구니 목록 열기";
+  $("open").hidden = false;
+}
+
+loadToken();
   if (!token) { show("먼저 연결 코드를 저장하세요.", "err"); return; }
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   let host = "";
@@ -35,6 +67,9 @@ $("capture").addEventListener("click", async () => {
     show("타오바오 또는 티몰 상품 페이지에서 눌러주세요.", "err");
     return;
   }
+  let isCart = false;
+  try { const u = new URL(tab.url); isCart = /(^|\.)cart\./.test(u.hostname) || /\/cart/i.test(u.pathname); } catch (e) { /* ignore */ }
+  if (isCart) { await captureCart(tab, token); return; }
   show("화면을 읽는 중...");
   let data;
   try {
@@ -70,5 +105,37 @@ $("capture").addEventListener("click", async () => {
   show(lines.join("\n"), "ok");
   $("open").hidden = false;
 });
+
+async function captureCart(tab, token) {
+  show("장바구니를 읽는 중...");
+  let data;
+  try {
+    const [res] = await chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ["extract_cart.js"] });
+    data = res && res.result;
+  } catch (e) {
+    show("이 탭을 읽을 수 없습니다: " + e.message, "err");
+    return;
+  }
+  if (!data) { show("장바구니를 읽지 못했습니다. 새로고침한 뒤 다시 누르세요.", "err"); return; }
+  if (data.status === "no_product") { show("장바구니에서 상품을 찾지 못했습니다. 목록이 다 보인 뒤 다시 누르세요.", "err"); return; }
+  if (data.status !== "ok") { show(MESSAGES[data.status] || "가져올 수 없는 화면입니다.", "err"); return; }
+  let resp, body;
+  try {
+    resp = await fetch(APP + "/capture/cart", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-Capture-Token": token },
+      body: JSON.stringify(data),
+    });
+    body = await resp.json();
+  } catch (e) {
+    show("검토 프로그램에 연결하지 못했습니다. purchasing_start.bat 이 켜져 있는지 확인하세요.", "err");
+    return;
+  }
+  if (!resp.ok || !body.ok) { show(body.error || ("오류 " + resp.status), "err"); return; }
+  reviewUrl = body.review_url;
+  show("장바구니 상품 " + body.items + "개를 가져왔습니다.\n목록에서 상품을 하나씩 열고, 열린 상품 페이지에서 이 버튼을 다시 누르면 사진까지 저장됩니다.", "ok");
+  $("open").textContent = "장바구니 목록 열기";
+  $("open").hidden = false;
+}
 
 loadToken();

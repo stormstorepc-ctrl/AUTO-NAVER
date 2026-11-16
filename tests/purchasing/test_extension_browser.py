@@ -69,7 +69,7 @@ def serve(route):
     url = route.request.url
     if url.startswith("https://img.example.invalid/"):
         return route.fulfill(status=200, content_type="image/png", body=ICON if ("icon" in url or "pixel" in url) else BIG)
-    page = {"login": "login_like.html", "captcha": "captcha_like.html"}.get(route.request.headers.get("x-fixture", ""), "taobao_like.html")
+    page = {"login": "login_like.html", "captcha": "captcha_like.html", "cart": "cart_like.html"}.get(route.request.headers.get("x-fixture", ""), "taobao_like.html")
     route.fulfill(status=200, content_type="text/html; charset=utf-8", body=(FIXTURES / page).read_text(encoding="utf-8"))
 
 
@@ -125,6 +125,27 @@ def port_free_soon(seconds=10):
     return False
 
 
+def test_cart_extract_reads_rows_and_skips_recommendations(browser):
+    script = (EXT_DIR / "extract_cart.js").read_text(encoding="utf-8")
+    ctx = browser.new_context(extra_http_headers={"x-fixture": "cart"})
+    ctx.route("**/*", serve)
+    page = ctx.new_page()
+    page.goto("https://cart.taobao.com/cart.htm")
+    page.wait_for_load_state("load")
+    r = page.evaluate(script)
+    ctx.close()
+    assert r["status"] == "ok" and r["kind"] == "cart" and len(r["items"]) == 3        # recommendation and outside link skipped
+    white, black, rack = r["items"]
+    assert white["item_id"] == black["item_id"] == "712345678901" and rack["item_id"] == "1055677150014"
+    assert white["title"] == "合成 桌面收纳盒 加厚" and white["sku_text"] == "颜色分类：白色 / 尺寸：大号"
+    assert white["price_texts"] == ["原价 ¥59.00", "¥39.90"] and white["quantity"] == 2 and white["checked"] is True
+    assert black["sku_text"] == "颜色分类：黑色" and black["price_texts"] == ["¥45.00"] and black["checked"] is False
+    assert white["image"] == "https://img.example.invalid/c1.jpg" and rack["image"] == "https://img.example.invalid/c2.jpg"
+    from app.purchasing.capture import first_price, validate_cart
+    rows = validate_cart(r)
+    assert len(rows) == 3 and first_price(rows[0]["price_texts"]) == "39.90"
+
+
 def unpacked_extension_id(path: Path) -> str:
     digest = hashlib.sha256(str(path.resolve()).encode()).hexdigest()[:32]
     return "".join(chr(ord("a") + int(c, 16)) for c in digest)
@@ -155,7 +176,7 @@ def test_extension_page_can_post_to_local_server(pw, tmp_path):
         try:
             page = ctx.new_page()
             page.goto(f"chrome-extension://{unpacked_extension_id(EXT_DIR)}/popup.html")
-            assert page.locator("#capture").inner_text() == "이 상품 가져오기"
+            assert page.locator("#capture").inner_text() == "이 화면 가져오기 (상품 / 장바구니)"
             payload = {"schema": 1, "status": "ok", "url": PRODUCT_URL, "title": "合成测试", "price_texts": ["¥39.90"],
                        "selected_options": ["白色"], "images": ["https://img.example.invalid/main1.jpg"],
                        "detail_images": [], "notes": [], "captured_at": "2026-11-08T00:00:00Z"}

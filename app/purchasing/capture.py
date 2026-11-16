@@ -164,3 +164,37 @@ def product_from_capture(capture: dict, existing: dict | None, form: dict) -> di
                        "restricted_flags": keep.get("compliance", {}).get("restricted_flags", [])},
         "options": options,
     })
+
+
+def validate_cart(payload) -> list[dict]:
+    """Rows read from the cart tab. Rows whose link is not a Taobao/Tmall product are dropped."""
+    if not isinstance(payload, dict) or payload.get("schema") != 1 or payload.get("kind") != "cart":
+        raise ValidationError("확장 프로그램 데이터 형식이 올바르지 않습니다. 확장 프로그램을 최신으로 바꾸세요.")
+    status = payload.get("status")
+    if status not in CAPTURE_STATUSES:
+        raise ValidationError("status 값이 올바르지 않습니다.")
+    if status != "ok":
+        raise ValidationError({"login_required": "타오바오 로그인 화면입니다. 로그인한 뒤 장바구니에서 다시 누르세요.",
+                               "captcha": "타오바오 보안 확인 화면입니다. 직접 확인을 마친 뒤 다시 누르세요.",
+                               "no_product": "장바구니에서 상품을 찾지 못했습니다."}[status])
+    raw = payload.get("items")
+    if not isinstance(raw, list):
+        raise ValidationError("items: 목록이어야 합니다")
+    items = []
+    for row in raw[:200]:
+        if not isinstance(row, dict):
+            continue
+        try:
+            item_id, url = taobao_item(row.get("url", ""))
+        except ValidationError:
+            continue
+        image = _https_only(_image_list([row["image"]] if isinstance(row.get("image"), str) and row["image"] else []))
+        qty = row.get("quantity")
+        items.append({"item_id": item_id, "url": url, "title": _short_text(row.get("title"), "title", 300),
+                      "sku_text": _short_text(row.get("sku_text"), "sku_text", 300),
+                      "price_texts": _text_list(row.get("price_texts"), "price_texts", 80, 6),
+                      "image": image[0] if image else "",
+                      "quantity": qty if isinstance(qty, int) and not isinstance(qty, bool) and 0 < qty < 10000 else None})
+    if not items:
+        raise ValidationError("장바구니에서 타오바오/티몰 상품을 찾지 못했습니다.")
+    return items

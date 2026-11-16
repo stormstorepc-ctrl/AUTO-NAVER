@@ -25,7 +25,7 @@ from .importer import import_json, import_csv, validate_product
 from .review_ui import (import_form, product_forms, sample_document, channel_nav, COST_LABELS,
                         url_import_form, url_import_reply_form)
 from .assist import product_request, parse_product_reply, parse_translation_reply
-from .capture import MAX_CAPTURE_BYTES, first_price, product_from_capture, validate_capture
+from .capture import MAX_CAPTURE_BYTES, first_price, product_from_capture, validate_capture, validate_cart
 from . import easy
 from .cli import week_key
 
@@ -325,36 +325,58 @@ def create_app(store: Store, username: str, password: str, allow_hosts: tuple[st
                         headers={"Content-Disposition": 'attachment; filename="naver-bulk.xlsx"', "Cache-Control": "no-store"})
 
     # ---- Chrome 확장 수집 ----
-    @app.post("/capture")
-    async def capture_receive(request: Request):
-        """Called by the extension popup after the user clicks. Pairing code instead of Basic auth."""
+    async def extension_json(request: Request):
+        """Checks shared by every extension endpoint: loopback, extension Origin, pairing code, JSON size.
+        Returns (payload, None) or (None, error response)."""
         host = request.client.host if request.client else ""
         try:
             loopback = ipaddress.ip_address(host).is_loopback
         except ValueError:
             loopback = False
         if not loopback and host not in allow_hosts:
-            return JSONResponse({"ok": False, "error": "loopback only"}, status_code=403)
+            return None, JSONResponse({"ok": False, "error": "loopback only"}, status_code=403)
         if not (request.headers.get("origin") or "").startswith("chrome-extension://"):
-            return JSONResponse({"ok": False, "error": "확장 프로그램에서만 보낼 수 있습니다."}, status_code=403)
+            return None, JSONResponse({"ok": False, "error": "확장 프로그램에서만 보낼 수 있습니다."}, status_code=403)
         sent = request.headers.get("x-capture-token", "")
         if not sent or not secrets.compare_digest(sent.encode(), store.capture_token().encode()):
-            return JSONResponse({"ok": False, "error": "연결 코드가 맞지 않습니다. 검토 화면의 'Chrome 확장으로 가져오기'에서 코드를 다시 복사하세요."},
-                                status_code=401)
+            return None, JSONResponse({"ok": False, "error": "연결 코드가 맞지 않습니다. 검토 화면의 'Chrome 확장으로 가져오기'에서 코드를 다시 복사하세요."},
+                                      status_code=401)
         if "application/json" not in request.headers.get("content-type", ""):
-            return JSONResponse({"ok": False, "error": "JSON만 받습니다."}, status_code=415)
+            return None, JSONResponse({"ok": False, "error": "JSON만 받습니다."}, status_code=415)
         body = bytearray()
         async for chunk in request.stream():
             body.extend(chunk)
             if len(body) > MAX_CAPTURE_BYTES:
-                return JSONResponse({"ok": False, "error": "데이터가 너무 큽니다."}, status_code=413)
+                return None, JSONResponse({"ok": False, "error": "데이터가 너무 큽니다."}, status_code=413)
         try:
-            payload = json.loads(body.decode("utf-8"))
-            data = validate_capture(payload)
-        except ValidationError as ex:  # subclass of ValueError: must come first
-            return JSONResponse({"ok": False, "error": str(ex)}, status_code=422)
+            return json.loads(body.decode("utf-8")), None
         except (ValueError, UnicodeError):
-            return JSONResponse({"ok": False, "error": "JSON 형식이 올바르지 않습니다."}, status_code=400)
+            return None, JSONResponse({"ok": False, "error": "JSON 형식이 올바르지 않습니다."}, status_code=400)
+
+    @app.post("/capture/cart")
+    async def capture_cart(request: Request):
+        """Cart rows read by the extension from the cart tab the user opened."""
+        payload, error = await extension_json(request)
+        if error:
+            return error
+        try:
+            rows = validate_cart(payload)
+        except ValidationError as ex:
+            return JSONResponse({"ok": False, "error": str(ex)}, status_code=422)
+        total = store.upsert_cart_rows(rows)
+        port = request.url.port or 8765
+        return JSONResponse({"ok": True, "items": len(rows), "total": total, "review_url": f"http://127.0.0.1:{port}/capture#cart"})
+
+    @app.post("/capture")
+    async def capture_receive(request: Request):
+        """Called by the extension popup after the user clicks. Pairing code instead of Basic auth."""
+        payload, error = await extension_json(request)
+        if error:
+            return error
+        try:
+            data = validate_capture(payload)
+        except ValidationError as ex:
+            return JSONResponse({"ok": False, "error": str(ex)}, status_code=422)
         cid = store.add_capture(data["item_id"], data["url"], data)
         port = request.url.port or 8765
         return JSONResponse({"ok": True, "capture_id": cid, "review_url": f"http://127.0.0.1:{port}/capture/{cid}",
@@ -371,8 +393,26 @@ def create_app(store: Store, username: str, password: str, allow_hosts: tuple[st
             f"<td>{E(', '.join(r['data'].get('selected_options', [])) or '-')}</td>"
             f"<td>{'저장됨' if r['status'] == 'saved' else '검토 대기'}</td><td>{E(r['created_at'][:16])}</td></tr>"
             for r in store.list_captures())
+        def cart_status(r):
+            if r["product_id"]:
+                return f"<a href='/product/{r['product_id']}'>상품 저장됨</a>"
+            return "사진 가져옴 · 아래 목록에서 확인" if r["captures"] else "아직 상품 페이지를 안 열었음"
+        cart = "".join(
+            "<tr><td>" + (f"<img src='{E(r['image'], quote=True)}' referrerpolicy=no-referrer alt='' style='width:60px;height:60px;object-fit:contain'>"
+                          if r["image"] else "") + "</td>"
+            f"<td>{E(r['title'])}</td><td>{E(r['sku_text'] or '-')}</td><td>{E(' / '.join(r['price_texts']) or '-')}</td>"
+            f"<td>{cart_status(r)}</td>"
+            f"<td><a href='{E(r['url'], quote=True)}' target=_blank rel=noreferrer>상품 페이지 열기</a></td></tr>"
+            for r in store.list_cart_rows())
+        cart_section = (
+            "<section id=cart><h2>장바구니에서 가져온 상품</h2>"
+            "<ol><li>타오바오 <b>장바구니 화면</b>에서 확장 버튼을 누르면 여기에 목록이 들어옵니다.</li>"
+            "<li><b>상품 페이지 열기</b>로 상품을 열고, 끝까지 한 번 내린 뒤 확장 버튼을 누르면 사진까지 가져옵니다.</li></ol>"
+            "<p>프로그램이 타오바오를 대신 돌아다니지 않습니다. 직접 연 화면만 읽습니다.</p>"
+            + ("<table><tr><th></th><th>원문 제목</th><th>장바구니 옵션</th><th>장바구니 가격</th><th>상태</th><th></th></tr>"
+               f"{cart}</table>" if cart else "<p>아직 가져온 장바구니가 없습니다.</p>") + "</section>")
         return page(
-            "<h1>Chrome 확장으로 가져오기</h1>"
+            "<h1>Chrome 확장으로 가져오기</h1>" + cart_section +
             "<section><h2>처음 한 번: 확장 프로그램 설치</h2><ol>"
             "<li>Chrome 주소창에 <b>chrome://extensions</b> 를 입력합니다.</li>"
             "<li>오른쪽 위 <b>개발자 모드</b>를 켭니다.</li>"
@@ -385,7 +425,7 @@ def create_app(store: Store, username: str, password: str, allow_hosts: tuple[st
             "<section><h2>상품 가져오기</h2><ol>"
             "<li>Chrome에서 타오바오/티몰 상품 페이지를 엽니다. 로그인이 필요하면 직접 로그인합니다.</li>"
             "<li>원하는 옵션(색상·사이즈)을 누르고, 상세 이미지를 보려면 페이지 끝까지 한 번 내립니다.</li>"
-            "<li>확장 아이콘 → <b>이 상품 가져오기</b>를 누릅니다.</li>"
+            "<li>확장 아이콘 → <b>이 화면 가져오기</b>를 누릅니다.</li>"
             "<li>나오는 <b>검토 화면 열기</b>에서 가격·이미지를 확인하고 저장합니다. 다른 옵션은 그 옵션을 누른 뒤 다시 가져오면 같은 상품에 추가됩니다.</li></ol>"
             "<p>확장 프로그램은 버튼을 누른 그 탭의 화면만 읽습니다. 로그인·보안 확인 화면이면 멈추고 알려줍니다.</p></section>"
             "<h2>가져온 목록</h2><table><tr><th>번호</th><th>원문 제목</th><th>선택 옵션</th><th>상태</th><th>시각(UTC)</th></tr>"
@@ -410,6 +450,13 @@ def create_app(store: Store, username: str, password: str, allow_hosts: tuple[st
         cap = capture_or_404(cid)
         d = cap["data"]
         existing = store.find_product("taobao", cap["item_id"])
+        in_cart = store.cart_rows_for(cap["item_id"])
+        # The product page is the main source. A single cart row only fills what the page did not show.
+        only = in_cart[0] if len(in_cart) == 1 else None
+        option_default = " / ".join(d["selected_options"]) or (only["sku_text"] if only and only["sku_text"] else "기본")
+        price_default = first_price(d["price_texts"]) or (first_price(only["price_texts"]) if only else "")
+        cart_hint = ("" if not in_cart else "<p>장바구니에 담은 내용: " + " · ".join(
+            f"{E(r['sku_text'] or '옵션 없음')} ({E(' / '.join(r['price_texts']) or '가격 없음')})" for r in in_cart) + "</p>")
         def figure(u, checked):
             return (f"<label style='display:inline-block;width:160px;vertical-align:top'>"
                     f"<input type=checkbox name=images value='{E(u, quote=True)}' {'checked' if checked else ''}> "
@@ -429,10 +476,10 @@ def create_app(store: Store, username: str, password: str, allow_hosts: tuple[st
             + (f"<ul>{notes}</ul>" if notes else "") +
             f"<form method=post action='/capture/{cid}/save'>"
             "<section><h2>1. 옵션과 가격</h2>"
-            f"<p>화면에 보인 가격: {prices}</p>"
+            f"<p>화면에 보인 가격: {prices}</p>" + cart_hint +
             "<p>선택하지 않은 옵션의 가격은 추측하지 않습니다. 다른 옵션은 그 옵션을 누른 뒤 다시 가져오세요.</p>"
-            f"<label>옵션 이름(원문) <input name=option_name value='{E(' / '.join(d['selected_options']) or '기본', quote=True)}' required></label>"
-            f"<label>이 옵션의 구매 가격(위안) <input name=unit_price value='{E(first_price(d['price_texts']), quote=True)}' required inputmode=decimal></label>"
+            f"<label>옵션 이름(원문) <input name=option_name value='{E(option_default, quote=True)}' required></label>"
+            f"<label>이 옵션의 구매 가격(위안) <input name=unit_price value='{E(price_default, quote=True)}' required inputmode=decimal></label>"
             "<label>무게(g, 모르면 비움) <input name=weight_g inputmode=decimal></label></section>"
             "<section><h2>2. 이미지</h2><p>쓸 이미지만 체크된 상태로 두세요.</p>"
             f"<h3>대표 이미지</h3>{main}<h3>상세 이미지</h3>{detail}"

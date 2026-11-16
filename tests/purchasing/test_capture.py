@@ -160,3 +160,49 @@ def test_token_not_written_to_audit(store):
     token = store.capture_token(rotate=True)
     with store.tx() as cx:
         assert all(token not in (r[0] or "") for r in cx.execute("SELECT detail FROM audit"))
+
+
+# ---- 장바구니 ----
+def cart_payload(**over):
+    p = {"schema": 1, "kind": "cart", "status": "ok", "url": "https://cart.taobao.com/cart.htm",
+         "items": [{"item_id": "x", "url": "https://item.taobao.com/item.htm?id=712345678901&spm=1", "title": "合成 收纳盒",
+                    "sku_text": "颜色分类：白色", "price_texts": ["¥39.90"], "image": "//img.example.invalid/c1.jpg", "quantity": 2},
+                   {"url": "https://detail.tmall.com/item.htm?id=1055677150014", "title": "合成 沥水架", "sku_text": "",
+                    "price_texts": [], "image": "javascript:alert(1)", "quantity": "many"},
+                   {"url": "https://evil.example/item.htm?id=712345678901", "title": "x"}, "not a row"]}
+    p.update(over)
+    return p
+
+
+def test_validate_cart_keeps_only_taobao_rows():
+    from app.purchasing.capture import validate_cart
+    rows = validate_cart(cart_payload())
+    assert [r["item_id"] for r in rows] == ["712345678901", "1055677150014"]          # id from the link, not the payload
+    assert rows[0]["url"] == "https://item.taobao.com/item.htm?id=712345678901" and rows[0]["image"] == "https://img.example.invalid/c1.jpg"
+    assert rows[0]["quantity"] == 2 and rows[1]["image"] == "" and rows[1]["quantity"] is None
+    for bad in (cart_payload(status="login_required"), cart_payload(items=[]), cart_payload(kind="product"), cart_payload(items="x")):
+        with pytest.raises(ValidationError):
+            validate_cart(bad)
+
+
+def test_cart_endpoint_list_and_review_hint(store):
+    c = client(store)
+    token = token_of(c)
+    assert c.post("/capture/cart", json=cart_payload(), headers=EXT).status_code == 401
+    assert c.post("/capture/cart", json=cart_payload(), headers={"Origin": "https://evil.example", "X-Capture-Token": token}).status_code == 403
+    r = c.post("/capture/cart", json=cart_payload(), headers={**EXT, "X-Capture-Token": token})
+    assert r.status_code == 200 and r.json()["items"] == 2 and r.json()["review_url"].endswith("/capture#cart")
+    again = c.post("/capture/cart", json=cart_payload(), headers={**EXT, "X-Capture-Token": token})
+    assert again.json()["total"] == 2                                                   # reading the cart twice adds nothing
+    page = c.get("/capture", headers=AUTH).text
+    assert "合成 收纳盒" in page and "颜色分类：白色" in page and "아직 상품 페이지를 안 열었음" in page
+    assert "https://item.taobao.com/item.htm?id=712345678901" in page
+    # A product-page capture with no selected option and no price takes both from the single cart row.
+    cap = c.post("/capture", json=payload(url="https://item.taobao.com/item.htm?id=712345678901", selected_options=[], price_texts=[]),
+                 headers={**EXT, "X-Capture-Token": token}).json()["capture_id"]
+    review = c.get(f"/capture/{cap}", headers=AUTH)
+    values = form_values(review, f"/capture/{cap}/save")
+    assert values["option_name"] == "颜色分类：白色" and values["unit_price"] == "39.90" and "장바구니에 담은 내용" in review.text
+    assert "사진 가져옴" in c.get("/capture", headers=AUTH).text
+    c.post(f"/capture/{cap}/save", headers=ORIGIN, data={**values, "images": ["https://img.example.invalid/main1.jpg"]})
+    assert "상품 저장됨" in c.get("/capture", headers=AUTH).text

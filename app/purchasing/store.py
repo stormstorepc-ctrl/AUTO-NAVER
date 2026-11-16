@@ -47,6 +47,9 @@ CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY, value TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS captures(
   id INTEGER PRIMARY KEY, item_id TEXT NOT NULL, url TEXT NOT NULL, data TEXT NOT NULL,
   status TEXT NOT NULL DEFAULT 'new', created_at TEXT NOT NULL, product_id INTEGER);
+CREATE TABLE IF NOT EXISTS cart_rows(
+  id INTEGER PRIMARY KEY, item_id TEXT NOT NULL, sku_text TEXT NOT NULL, data TEXT NOT NULL, updated_at TEXT NOT NULL,
+  UNIQUE(item_id, sku_text));
 CREATE TABLE IF NOT EXISTS audit(
   id INTEGER PRIMARY KEY, at TEXT NOT NULL, actor TEXT, event TEXT NOT NULL, detail TEXT);
 """
@@ -207,6 +210,32 @@ class Store:
     def mark_capture_saved(self, capture_id: int, product_id: int) -> None:
         with self.tx() as c:
             c.execute("UPDATE captures SET status='saved', product_id=? WHERE id=?", (product_id, capture_id))
+
+    def upsert_cart_rows(self, rows: list[dict]) -> int:
+        """Keep one row per product + option text. Reading the cart again updates rows; nothing is deleted."""
+        with self.tx() as c:
+            for r in rows:
+                c.execute("INSERT INTO cart_rows(item_id,sku_text,data,updated_at) VALUES(?,?,?,?) "
+                          "ON CONFLICT(item_id,sku_text) DO UPDATE SET data=excluded.data, updated_at=excluded.updated_at",
+                          (r["item_id"], r["sku_text"], canonical(r), iso(now_utc())))
+            return c.execute("SELECT COUNT(*) FROM cart_rows").fetchone()[0]
+
+    def list_cart_rows(self) -> list[dict]:
+        with self.tx() as c:
+            rows = c.execute("SELECT data, updated_at FROM cart_rows ORDER BY id").fetchall()
+            out = []
+            for r in rows:
+                d = json.loads(r["data"])
+                d["updated_at"] = r["updated_at"]
+                d["captures"] = c.execute("SELECT COUNT(*) FROM captures WHERE item_id=?", (d["item_id"],)).fetchone()[0]
+                p = c.execute("SELECT id FROM products WHERE source='taobao' AND source_product_id=?", (d["item_id"],)).fetchone()
+                d["product_id"] = p[0] if p else None
+                out.append(d)
+            return out
+
+    def cart_rows_for(self, item_id: str) -> list[dict]:
+        with self.tx() as c:
+            return [json.loads(r[0]) for r in c.execute("SELECT data FROM cart_rows WHERE item_id=? ORDER BY id", (item_id,))]
 
     def find_product(self, source: str, source_product_id: str) -> dict | None:
         with self.tx() as c:
