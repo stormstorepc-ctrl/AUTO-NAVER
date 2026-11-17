@@ -136,7 +136,7 @@ def test_capture_endpoint_auth_and_flow(store):
     cid = r.json()["capture_id"]
     review = c.get(f"/capture/{cid}", headers=AUTH)
     assert review.status_code == 200 and "合成测试 沥水架" in review.text and "39.90" in review.text
-    assert "img-src https:" in review.headers["content-security-policy"]
+    assert "img-src 'self' https:" in review.headers["content-security-policy"]
     values = form_values(review, f"/capture/{cid}/save")
     assert values["option_name"] == "白色 50cm" and values["unit_price"] == "39.90"
     saved = c.post(f"/capture/{cid}/save", headers=ORIGIN,

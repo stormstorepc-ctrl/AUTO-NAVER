@@ -12,7 +12,7 @@ from tests.purchasing.test_web import client, AUTH
 
 SETTINGS = {**easy.DEFAULTS, "margin_pct": "7", "commission_pct": "5", "fx_krw_per_cny": "200", "extra_cost_krw": "3000",
             "category_code": "50003307", "origin_code": "0200037", "importer": "구매대행", "shipping_template_code": "2035152",
-            "as_phone": "02-0000-0000", "as_note": "평일 10~17시"}
+            "as_phone": "02-0000-0000", "as_note": "평일 10~17시", "image_mode": "url"}
 
 
 def test_sale_price_leaves_margin_of_cost_after_fee():

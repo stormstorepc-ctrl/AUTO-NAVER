@@ -26,7 +26,7 @@ from .review_ui import (import_form, product_forms, sample_document, channel_nav
                         url_import_form, url_import_reply_form)
 from .assist import product_request, parse_product_reply, parse_translation_reply
 from .capture import MAX_CAPTURE_BYTES, first_price, product_from_capture, validate_capture, validate_cart
-from . import easy
+from . import easy, images as product_images
 from .cli import week_key
 
 CHANNELS = ("smartstore", "danggeun", "bunjang")
@@ -94,7 +94,7 @@ def create_app(store: Store, username: str, password: str, allow_hosts: tuple[st
                             f"nav{{margin:16px 0}}a{{color:#234dbe}}.notice{{padding:12px;background:#e8edff}}"
                             f"</style><header><a href='/'>상품 목록</a> · <a href='/import'>상품 가져오기</a> · <a href='/import/url'>주소로 상품 추가</a> · <a href='/capture'>Chrome 확장으로 가져오기</a> · <a href='/easy'>간편 설정·네이버 엑셀</a>"
                             f"<p class=notice>구매대행 시연 · 실제 판매 채널 등록 없이 모의 흐름을 확인합니다.</p></header>{body}",
-                            headers={"Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; img-src https: http:; form-action 'self'",
+                            headers={"Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; img-src 'self' https: http:; form-action 'self'",
                                      "X-Frame-Options": "DENY", "Cache-Control": "no-store"})
 
     @app.exception_handler(ValidationError)
@@ -247,23 +247,26 @@ def create_app(store: Store, username: str, password: str, allow_hosts: tuple[st
             if key == "customs":
                 opts = "".join(f"<option {'selected' if st[key] == c else ''}>{E(c)}</option>" for c in easy.CUSTOMS_CHOICES)
                 return f"<label>{E(easy.LABELS[key])} <select name={key}>{opts}</select></label>"
+            if key == "image_mode":
+                opts = "".join(f"<option value={k} {'selected' if st[key] == k else ''}>{E(v)}</option>" for k, v in easy.IMAGE_MODES.items())
+                return f"<label>{E(easy.LABELS[key])} <select name={key}>{opts}</select></label>"
             return f"<label>{E(easy.LABELS[key])} <input name={key} value='{E(st[key], quote=True)}'></label>"
         price_fields = "".join(field(k) for k in ("margin_pct", "commission_pct", "fx_krw_per_cny", "extra_cost_krw"))
         naver_fields = "".join(field(k) for k in ("stock", "category_code", "origin_code", "importer", "customs",
-                                                  "shipping_template_code", "as_template_code", "as_phone", "as_note"))
+                                                  "shipping_template_code", "as_template_code", "as_phone", "as_note", "image_mode"))
         rows = ""
         with store.tx() as c:
             ids = [r[0] for r in c.execute("SELECT id FROM products WHERE status!='rejected' ORDER BY id")]
-            for pid in ids:
-                p = store.get_product(c, pid)
-                tr = store.latest_translation(c, pid)
-                try:
-                    prices = ", ".join(f"{easy.sale_price(o['unit_price'], st)['sale_krw']:,}원" for o in p["options"])
-                except ValidationError:
-                    prices = "설정 필요"
-                rows += (f"<tr><td><input type=checkbox name=ids value={pid} checked></td><td><a href='/product/{pid}'>{pid}</a></td>"
-                         f"<td>{E(tr['title_ko'] if tr else '(번역 없음)')}<br>{E(p['title_src'])}</td>"
-                         f"<td>{len(p['options'])}개</td><td>{E(prices)}</td><td>{len(p['images'])}개</td></tr>")
+            listed = [(pid, store.get_product(c, pid), store.latest_translation(c, pid)) for pid in ids]
+        for pid, p, tr in listed:
+            try:
+                prices = ", ".join(f"{easy.sale_price(o['unit_price'], st)['sale_krw']:,}원" for o in p["options"])
+            except ValidationError:
+                prices = "설정 필요"
+            saved_count = len(product_images.local_names(store, p["images"][:10]))
+            rows += (f"<tr><td><input type=checkbox name=ids value={pid} checked></td><td><a href='/product/{pid}'>{pid}</a></td>"
+                     f"<td>{E(tr['title_ko'] if tr else '(번역 없음)')}<br>{E(p['title_src'])}</td>"
+                     f"<td>{len(p['options'])}개</td><td>{E(prices)}</td><td>{len(p['images'])}개 (PC 저장 {saved_count})</td></tr>")
         return page(
             "<h1>간편 설정 · 네이버 엑셀</h1>"
             "<form method=post action='/easy/settings'><section><h2>1. 가격 설정</h2>"
@@ -274,7 +277,10 @@ def create_app(store: Store, username: str, password: str, allow_hosts: tuple[st
             "<form method=post action='/easy/naver.xlsx'><section><h2>3. 네이버 일괄등록 엑셀 만들기</h2>"
             "<p>체크한 상품으로 스마트스토어 '상품 일괄등록' 엑셀을 만듭니다. 한국어 번역과 이미지가 있는 상품만 들어갑니다.</p>"
             "<table><tr><th></th><th>번호</th><th>상품명</th><th>옵션</th><th>판매가</th><th>이미지</th></tr>"
-            f"{rows}</table><button>엑셀 내려받기</button> <button formaction='/easy/naver/check'>올리기 전 확인할 점 보기</button>"
+            f"{rows}</table><button>엑셀 내려받기</button> <button formaction='/easy/naver-images.zip'>사진 ZIP 내려받기</button> "
+            "<button formaction='/easy/naver/check'>올리기 전 확인할 점 보기</button>"
+            "<p>사진 파일 방식이면: 스마트스토어 '상품 일괄등록'에서 <b>사진 ZIP 안의 사진을 먼저 이미지 업로드</b>하고, 그다음 엑셀을 올립니다. "
+            "상세설명의 사진은 네이버 규칙상 인터넷 주소여야 해서 지금은 타오바오 주소를 씁니다.</p>"
             "</section></form>")
 
     @app.post("/easy/settings")
@@ -291,18 +297,18 @@ def create_app(store: Store, username: str, password: str, allow_hosts: tuple[st
         st = easy_settings()
         rows, notes = [], []
         with store.tx() as c:
-            for pid in map(int, ids):
-                p = store.get_product(c, pid)
-                if p is None:
-                    continue
-                try:
-                    row, warnings = easy.naver_row(p, store.latest_translation(c, pid), st)
-                except ValidationError as ex:
-                    notes.append((pid, p["title_src"], [f"엑셀에서 제외: {ex}"]))
-                    continue
-                rows.append(row)
-                if warnings:
-                    notes.append((pid, row["상품명"], warnings))
+            picked = [(pid, store.get_product(c, pid), store.latest_translation(c, pid)) for pid in map(int, ids)]
+        for pid, p, tr in picked:
+            if p is None:
+                continue
+            try:
+                row, warnings = easy.naver_row(p, tr, st, product_images.local_names(store, p["images"][:10]))
+            except ValidationError as ex:
+                notes.append((pid, p["title_src"], [f"엑셀에서 제외: {ex}"]))
+                continue
+            rows.append(row)
+            if warnings:
+                notes.append((pid, row["상품명"], warnings))
         return rows, notes
 
     @app.post("/easy/naver/check")
@@ -313,6 +319,44 @@ def create_app(store: Store, username: str, password: str, allow_hosts: tuple[st
                         + "".join(f"<li>{E(n)}</li>" for n in ns) + "</ul></li>" for pid, title, ns in notes)
         return page(f"<h1>올리기 전 확인할 점</h1><p>엑셀에 들어가는 상품 {len(rows)}개</p>"
                     + (f"<ul>{items}</ul>" if items else "<p>확인할 점이 없습니다.</p>") + "<a href='/easy'>돌아가기</a>")
+
+    @app.post("/easy/naver-images.zip")
+    async def easy_naver_images(request: Request):
+        guard(request, True)
+        raw = await fields(request, multiple=True)
+        ids = [int(i) for i in raw.get("ids", []) if i.isdigit()][:500]
+        names = []
+        with store.tx() as c:
+            products = [store.get_product(c, pid) for pid in ids]
+        for p in filter(None, products):
+            names += list(product_images.local_names(store, p["images"][:10]).values())
+        if not names:
+            raise ValidationError("PC에 저장된 사진이 없습니다. 상품 화면에서 '사진 PC에 저장'을 먼저 누르세요.")
+        return Response(product_images.zip_files(names), media_type="application/zip",
+                        headers={"Content-Disposition": 'attachment; filename="naver-images.zip"', "Cache-Control": "no-store"})
+
+    @app.post("/product/{pid}/images/save")
+    async def product_images_save(pid: int, request: Request):
+        guard(request, True)
+        p = product(pid)
+        result = product_images.save_product_images(store, p)
+        failed = "".join(f"<li>{E(u)} — {E(why)}</li>" for u, why in result["failed"])
+        return page(f"<h1>사진 저장</h1><p>새로 저장 {len(result['saved'])}개 · 이미 있음 {len(result['kept'])}개 · "
+                    f"실패 {len(result['failed'])}개</p><p>저장 폴더: {E(result['folder'])}</p>"
+                    + (f"<ul>{failed}</ul>" if failed else "")
+                    + "".join(f"<img src='/local-images/{E(n, quote=True)}' alt='' style='width:120px;height:120px;object-fit:contain;margin:4px;background:#eee'>"
+                              for n in result["saved"] + result["kept"])
+                    + f"<p><a href='/product/{pid}'>상품 화면으로</a> · <a href='/easy'>네이버 엑셀</a></p>")
+
+    @app.get("/local-images/{name}")
+    def local_image(name: str, request: Request):
+        guard(request, False)
+        path = product_images.safe_path(name)
+        if not path.exists():
+            raise HTTPException(404)
+        ext = name.rsplit(".", 1)[1]
+        return Response(path.read_bytes(), media_type={"jpg": "image/jpeg"}.get(ext, f"image/{ext}"),
+                        headers={"Cache-Control": "no-store"})
 
     @app.post("/easy/naver.xlsx")
     async def easy_naver_xlsx(request: Request):
@@ -639,7 +683,10 @@ def create_app(store: Store, username: str, password: str, allow_hosts: tuple[st
             f"<tr><td>{E(p['title_src'])}<hr>{E(p['description_src'])}</td><td>{E(tr['title_ko']) if tr else '-'}<hr>{E(tr['description_ko']) if tr else '-'}</td></tr></table>"
             f"<h2>가격 구성 · {CHANNEL_LABELS[channel]} — 고정비·소득세 차감 전, 이익 보장 아님</h2>"
             f"<table><tr><th>옵션</th><th>판매가</th><th>원가</th><th>수수료/배송수수료/고정</th><th>마진</th><th>원가 상승 시나리오</th><th>차단</th></tr>{q_rows}</table>"
-            f"<p>이미지 {len(p['images'])}개, 배송 {E(str(p.get('est_delivery_days')))}</p>" + product_forms(p, tr, qs, channel))
+            f"<p>이미지 {len(p['images'])}개 (PC에 저장 {len(product_images.local_names(store, p['images']))}개), "
+            f"배송 {E(str(p.get('est_delivery_days')))}</p>"
+            f"<form method=post action='/product/{pid}/images/save'><button>사진 PC에 저장</button></form>"
+            + product_forms(p, tr, qs, channel))
 
     @app.post("/bulk")
     async def bulk(request: Request):

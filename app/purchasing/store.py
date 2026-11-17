@@ -50,6 +50,9 @@ CREATE TABLE IF NOT EXISTS captures(
 CREATE TABLE IF NOT EXISTS cart_rows(
   id INTEGER PRIMARY KEY, item_id TEXT NOT NULL, sku_text TEXT NOT NULL, data TEXT NOT NULL, updated_at TEXT NOT NULL,
   UNIQUE(item_id, sku_text));
+CREATE TABLE IF NOT EXISTS image_files(
+  url TEXT PRIMARY KEY, item_id TEXT NOT NULL, name TEXT NOT NULL UNIQUE, sha256 TEXT NOT NULL, bytes INTEGER NOT NULL,
+  saved_at TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS audit(
   id INTEGER PRIMARY KEY, at TEXT NOT NULL, actor TEXT, event TEXT NOT NULL, detail TEXT);
 """
@@ -236,6 +239,17 @@ class Store:
     def cart_rows_for(self, item_id: str) -> list[dict]:
         with self.tx() as c:
             return [json.loads(r[0]) for r in c.execute("SELECT data FROM cart_rows WHERE item_id=? ORDER BY id", (item_id,))]
+
+    def image_file(self, url: str) -> dict | None:
+        with self.tx() as c:
+            r = c.execute("SELECT * FROM image_files WHERE url=?", (url,)).fetchone()
+            return dict(r) if r else None
+
+    def add_image_file(self, url: str, item_id: str, name: str, digest: str, size: int) -> None:
+        with self.tx() as c:
+            c.execute("INSERT INTO image_files(url,item_id,name,sha256,bytes,saved_at) VALUES(?,?,?,?,?,?) "
+                      "ON CONFLICT(url) DO UPDATE SET name=excluded.name, sha256=excluded.sha256, bytes=excluded.bytes, "
+                      "saved_at=excluded.saved_at", (url, item_id, name, digest, size, iso(now_utc())))
 
     def find_product(self, source: str, source_product_id: str) -> dict | None:
         with self.tx() as c:

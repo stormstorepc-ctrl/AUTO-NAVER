@@ -16,7 +16,7 @@ from .pricing import ValidationError
 DEFAULTS = {
     "margin_pct": "7", "commission_pct": "", "fx_krw_per_cny": "", "extra_cost_krw": "",
     "stock": "999", "category_code": "", "origin_code": "", "importer": "", "customs": "부과 대상 아님",
-    "shipping_template_code": "", "as_template_code": "", "as_phone": "", "as_note": "",
+    "shipping_template_code": "", "as_template_code": "", "as_phone": "", "as_note": "", "image_mode": "file",
 }
 LABELS = {
     "margin_pct": "마진(%) — 수수료를 뺀 뒤 원가 대비 남길 비율",
@@ -31,7 +31,9 @@ LABELS = {
     "shipping_template_code": "배송비 템플릿 코드 (스마트스토어 > 템플릿관리)",
     "as_template_code": "A/S 템플릿 코드 (있으면 아래 두 칸은 비워도 됨)",
     "as_phone": "A/S 전화번호", "as_note": "A/S 안내",
+    "image_mode": "엑셀의 대표·추가이미지",
 }
+IMAGE_MODES = {"file": "PC에 저장한 사진 파일 이름 (사진 ZIP을 네이버에 먼저 올림)", "url": "타오바오 사진 주소 그대로"}
 CUSTOMS_CHOICES = ("부과 대상 아님", "관부가세 포함", "관부가세 미포함")
 SETTINGS_KEY = "easy_settings"
 
@@ -59,6 +61,8 @@ def clean_settings(form: dict) -> dict:
             _dec(value, key)
         if key == "commission_pct" and value and _dec(value, key) >= 100:
             raise ValidationError("판매 수수료는 100%보다 작아야 합니다.")
+        if key == "image_mode" and value not in IMAGE_MODES:
+            raise ValidationError("이미지 방식을 목록에서 고르세요.")
         if key == "customs" and value not in CUSTOMS_CHOICES:
             raise ValidationError("관부가세 값을 목록에서 고르세요.")
         if key == "as_phone" and value and not re.fullmatch(r"[0-9+\-]{1,20}", value):
@@ -117,7 +121,8 @@ def _option_value(name: str) -> str:
     return re.sub(r"[,\n\r]+", " ", name).strip()[:25] or "옵션"
 
 
-def naver_row(p: dict, translation: dict | None, settings: dict) -> tuple[dict, list[str]]:
+def naver_row(p: dict, translation: dict | None, settings: dict, files: dict[str, str] | None = None
+              ) -> tuple[dict, list[str]]:
     """상품 1개의 엑셀 한 줄(열 이름 → 값)과, 올리기 전에 확인할 점 목록."""
     warnings: list[str] = []
     if not translation:
@@ -146,11 +151,19 @@ def naver_row(p: dict, translation: dict | None, settings: dict) -> tuple[dict, 
     row = {"판매자 상품코드": f"TB{p['source_product_id']}"[:30], "카테고리코드": settings.get("category_code", ""),
            "상품명": title, "상품상태": "신상품", "판매가": base, "부가세": "과세상품", "관부가세": settings.get("customs", ""),
            "재고수량": int(_dec(settings.get("stock"), "stock")),
-           "대표이미지": p["images"][0], "추가이미지": "\n".join(p["images"][1:10]),
+           "대표이미지": "", "추가이미지": "",
            "원산지코드": settings.get("origin_code", ""), "수입사": settings.get("importer", ""),
            "배송비 템플릿코드": settings.get("shipping_template_code", ""),
            "A/S 템플릿코드": settings.get("as_template_code", ""), "A/S 전화번호": settings.get("as_phone", ""),
            "A/S 안내": settings.get("as_note", "")}
+    shown = p["images"][:10]
+    if settings.get("image_mode", "file") == "file":
+        files = files or {}
+        missing = [u for u in shown if u not in files]
+        if missing:
+            warnings.append(f"PC에 저장되지 않은 사진 {len(missing)}개는 타오바오 주소로 넣었습니다. 상품 화면에서 '사진 PC에 저장'을 누르세요.")
+        shown = [files.get(u, u) for u in shown]
+    row["대표이미지"], row["추가이미지"] = shown[0], "\n".join(shown[1:])
     if len(priced) > 1 or priced[0][0] not in ("기본", "옵션"):
         values, seen = [], set()
         for value, price in priced:
